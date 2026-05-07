@@ -1,11 +1,11 @@
-# glint demo cart — palette marquee
+# glint demo cart — interactive sparkbright blob
 #
-# This is the canonical "smallest interesting cart" — it draws nothing
-# but a moving sparkbright dot tracing a sine curve over a cycling
-# backdrop. Useful as:
-#   - A round-trip target for `glint pack` / `glint run`
+# The canonical "smallest playable cart" — a circle the player drives
+# with the arrow keys. Useful as:
+#   - A round-trip target for `glint pack` / `glint run` / `glint play`
 #   - The first cart new contributors load to confirm their build works
-#   - The reference template for the cart-author surface
+#   - The reference template for the cart-author surface (cls, btn,
+#     circ, circfill — every leg of the runtime in <30 lines of Lua)
 
 [glint]
 schema_version = 1
