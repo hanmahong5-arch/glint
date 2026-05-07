@@ -34,7 +34,7 @@ pub fn main(init: std.process.Init) !void {
     } else if (eql(cmd, "run")) {
         try cmdRun(arena, io, stdout, argv[2..]);
     } else if (eql(cmd, "new")) {
-        try cmdNew(stdout, argv[2..]);
+        try cmdNew(arena, io, stdout, argv[2..]);
     } else if (eql(cmd, "pack")) {
         try cmdPack(arena, io, stdout, argv[2..]);
     } else if (eql(cmd, "replay")) {
@@ -231,12 +231,120 @@ fn sectionTypeName(t: glint.cart_format.SectionType) []const u8 {
     };
 }
 
-fn cmdNew(w: *Io.Writer, sub: []const []const u8) !void {
+fn cmdNew(alloc: std.mem.Allocator, io: Io, w: *Io.Writer, sub: []const []const u8) !void {
     if (sub.len < 1) {
         try w.writeAll("glint new: missing project name. usage: glint new <name>\n");
         return error.MissingArgument;
     }
-    try w.print("glint new: stub — would scaffold cart project '{s}/'\n", .{sub[0]});
+    const name = sub[0];
+    if (!isValidCartName(name)) {
+        try w.print(
+            "glint new: '{s}' is not a valid cart name " ++
+                "(1..16 ASCII chars, alphanumeric/-/_, must start with alphanumeric)\n",
+            .{name},
+        );
+        return error.InvalidCartName;
+    }
+
+    const cwd = Io.Dir.cwd();
+    cwd.createDir(io, name, .default_dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {
+            try w.print("glint new: '{s}/' already exists; refusing to overwrite\n", .{name});
+            return err;
+        },
+        else => {
+            try w.print("glint new: cannot create '{s}/': {s}\n", .{ name, @errorName(err) });
+            return err;
+        },
+    };
+
+    // Manifest template uses the sandbox-friendly defaults from
+    // cart/manifest.zig, with the [caps] / [limits] sections commented in
+    // so cart authors can opt in by uncommenting rather than guessing
+    // syntax.
+    const manifest_text = try std.fmt.allocPrint(alloc,
+        \\# glint cart manifest — see doc/dx-reliability-spec.md §A.4 for the schema
+        \\
+        \\[glint]
+        \\schema_version = 1
+        \\title = "{s}"
+        \\author = "you"
+        \\min_engine = "{s}"
+        \\
+        \\# Uncomment to declare host capabilities:
+        \\#[caps]
+        \\#ai = "optional"      # talk to a local LLM via NPC API
+        \\#save = "optional"    # persistent cart-local key/value store
+        \\#net = "optional"     # outbound HTTP (cart marketplace, etc.)
+        \\
+        \\# Uncomment to override soft limits (defaults shown):
+        \\#[limits]
+        \\#heap_kb = 1024
+        \\#ai_tokens_per_sec = 60
+        \\
+    , .{ name, VERSION });
+    defer alloc.free(manifest_text);
+
+    // Lua skeleton mirrors the three engine entry points the runtime
+    // calls every cart on. cls(0) renders ink-black so the first run is
+    // visibly "alive" rather than an empty window.
+    const code_text =
+        \\-- glint cart entry points
+        \\-- _init runs once on load; _update at 60Hz; _draw every frame
+        \\
+        \\function _init()
+        \\  t = 0
+        \\end
+        \\
+        \\function _update()
+        \\  t = t + 1
+        \\end
+        \\
+        \\function _draw()
+        \\  cls(0)
+        \\  pset(64, 64, 11) -- single sparkbright pixel center-screen
+        \\end
+        \\
+    ;
+
+    const manifest_path = try std.fs.path.join(alloc, &.{ name, "manifest.toml" });
+    defer alloc.free(manifest_path);
+    const code_path = try std.fs.path.join(alloc, &.{ name, "code.lua" });
+    defer alloc.free(code_path);
+
+    cwd.writeFile(io, .{ .sub_path = manifest_path, .data = manifest_text }) catch |err| {
+        try w.print("glint new: cannot write '{s}': {s}\n", .{ manifest_path, @errorName(err) });
+        return err;
+    };
+    cwd.writeFile(io, .{ .sub_path = code_path, .data = code_text }) catch |err| {
+        try w.print("glint new: cannot write '{s}': {s}\n", .{ code_path, @errorName(err) });
+        return err;
+    };
+
+    try w.print(
+        \\glint new: scaffolded '{s}/'
+        \\  manifest.toml ({d} B)
+        \\  code.lua ({d} B)
+        \\
+        \\next:
+        \\  glint pack {s}
+        \\  glint run {s}/{s}.glint
+        \\
+    , .{ name, manifest_text.len, code_text.len, name, name, name });
+}
+
+/// Cart name = directory name + cart title. Both must round-trip through
+/// the cart binary's 16-byte ASCII title field, so the same constraint
+/// applies: 1..16 chars from {A-Z, a-z, 0-9, '-', '_'}, leading char must
+/// be alphanumeric (so the name doesn't look like a CLI flag).
+fn isValidCartName(s: []const u8) bool {
+    if (s.len == 0 or s.len > glint.manifest.TITLE_MAX) return false;
+    if (!std.ascii.isAlphanumeric(s[0])) return false;
+    for (s) |c| {
+        if (std.ascii.isAlphanumeric(c) or c == '-' or c == '_') continue;
+        return false;
+    }
+    return true;
 }
 
 fn cmdPack(alloc: std.mem.Allocator, io: Io, w: *Io.Writer, sub: []const []const u8) !void {
