@@ -42,6 +42,13 @@ pub const CartContext = struct {
     /// Stored by value so each cart gets an isolated, savable RNG state.
     rng: rng_mod.Xorshift32,
 
+    /// Camera offset applied to every drawing call. Cart authors set
+    /// via camera(x, y); world-space coordinates passed to pset/line/
+    /// rect/circ/etc. are translated to screen-space by subtracting
+    /// these values. camera() with no args resets both to 0.
+    cam_x: i32 = 0,
+    cam_y: i32 = 0,
+
     /// AI router backing ai.ask / ai.poll. Optional: null when the cart
     /// did not declare the `ai` capability (or host policy denied it).
     /// When null, ai bindings still load but ask is a no-op and poll
