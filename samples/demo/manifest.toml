@@ -1,0 +1,30 @@
+# glint demo cart — palette marquee
+#
+# This is the canonical "smallest interesting cart" — it draws nothing
+# but a moving sparkbright dot tracing a sine curve over a cycling
+# backdrop. Useful as:
+#   - A round-trip target for `glint pack` / `glint run`
+#   - The first cart new contributors load to confirm their build works
+#   - The reference template for the cart-author surface
+
+[glint]
+schema_version = 1
+title = "demo"
+author = "glint-team"
+min_engine = "0.0.1"
+
+# This cart asks for nothing. Hosts running it under the strictest
+# possible policy still get a working cart.
+#
+# Real carts will declare what they need; the engine refuses to grant
+# silent permissions.
+#
+# [caps]
+# ai = "optional"
+
+# Defaults are 1024 KB heap and 60 AI tokens/sec; the marquee uses none.
+# Listed here for reference, not because we need to change them.
+#
+# [limits]
+# heap_kb = 1024
+# ai_tokens_per_sec = 60

@@ -29,10 +29,12 @@ desktop.ini
 ehthumbs.db
 $RECYCLE.BIN/
 
-# Cart authoring temporaries
+# Cart authoring temporaries + pack outputs
 *.crash
 *.fnti
+*.glint
 *.glint.bak
+*.glint.png
 
 # Auto-downloaded LLM weights (huge, never commit)
 models/

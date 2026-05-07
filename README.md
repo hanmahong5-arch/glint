@@ -22,18 +22,34 @@ on purpose.
 
 ## status
 
-⚠️ **pre-alpha** — engine boots, CLI stubs in place. cart format, Luau bindings,
-LLM integration are tracked in [`doc/roadmap.md`](doc/roadmap.md) on a 12-week MVP plan.
+⚠️ **pre-alpha** — engine + cart-binary container + manifest TOML + scaffold/pack/run
+CLI all online. Luau VM and LLM router are next; tracked in
+[`doc/roadmap.md`](doc/roadmap.md) on a 12-week MVP plan.
 
 ## quick try
 
 ```sh
+# build the CLI (Zig 0.16.0 or newer)
 zig build
-zig build run -- version
+
+# scaffold a new cart, pack it, read it back
+./zig-out/bin/glint new mygame
+./zig-out/bin/glint pack mygame
+./zig-out/bin/glint run mygame/mygame.glint
+
+# or pack the in-repo sample
+./zig-out/bin/glint pack samples/demo
+./zig-out/bin/glint run samples/demo/demo.glint
+
+# open the demo window (palette bands + bouncing sprite, arrows to move)
+./zig-out/bin/glint demo
+
+# unit tests across all modules
 zig build test
 ```
 
-Requires Zig 0.16.0 or newer.
+The Luau VM lands in W5 (see [doc/roadmap.md](doc/roadmap.md)); until then `glint run`
+prints the cart summary instead of executing the Lua body.
 
 ## docs
 
