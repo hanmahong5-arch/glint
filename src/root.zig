@@ -37,6 +37,12 @@ pub const pixel = @import("runtime/pixel.zig");
 /// 8-button keyboard input abstraction (cart-author surface).
 pub const input = @import("runtime/input.zig");
 
+/// xxh3-64 state hashing for replay determinism + dev panel + desync detection.
+pub const state_hash = @import("runtime/state_hash.zig");
+
+/// Fixed-step 60Hz accumulator (Glenn Fiedler's "Fix Your Timestep").
+pub const time = @import("runtime/time.zig");
+
 /// Top-level engine error union. Per project policy library code does not
 /// panic; every fallible function returns an error from this set or a
 /// caller-injected superset.
