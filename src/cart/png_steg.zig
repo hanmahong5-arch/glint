@@ -139,7 +139,10 @@ test "encoding preserves high 6 bits of carrier" {
 }
 
 test "encoding zero payload preserves carrier exactly" {
-    const carrier: [4]u8 = .{ 0xAB, 0xCC, 0xEC, 0x10 }; // already &0xFC = same
+    // Each channel value must have its low 2 bits zero so that
+    // encoding payload=0 leaves it unchanged. 0xA8 (not 0xAB) — 0xAB
+    // has low bits 0b11 and the encoder would clear them to 0b00.
+    const carrier: [4]u8 = .{ 0xA8, 0xCC, 0xEC, 0x10 };
     const enc = encodePixel(carrier, 0);
     try std.testing.expectEqualSlices(u8, &carrier, &enc);
 }

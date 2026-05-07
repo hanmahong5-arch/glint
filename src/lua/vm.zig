@@ -161,11 +161,17 @@ fn applySandbox(lua: *zlua.Lua) void {
 
 /// Translate ziglua's verbose error union into our `VM.Error` set. Keeps
 /// callers from having to know zlua's internal error names.
+///
+/// Note on InvalidBytecode: Luau's doString compiles source to bytecode
+/// internally and surfaces compile failures as `error.InvalidBytecode`
+/// from luau_load. From the cart-author's point of view the source had
+/// a syntax error, so we surface it as SyntaxError. Direct loadBytecode
+/// callers (which we currently have none of) would need to differentiate
+/// — at that point split into LoadInvalidBytecode + SyntaxError.
 fn mapErr(err: anyerror) VM.Error {
     return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
-        error.InvalidBytecode => error.InvalidBytecode,
-        error.LuaSyntax => error.SyntaxError,
+        error.InvalidBytecode, error.LuaSyntax => error.SyntaxError,
         error.LuaRuntime, error.LuaMsgHandler => error.RuntimeError,
         else => error.RuntimeError,
     };

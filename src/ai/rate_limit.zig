@@ -146,8 +146,13 @@ test "low-rate refill still accumulates via residual" {
     // After 1000ms we should have 1 token.
     b.refill(1000);
     try testing.expectEqual(@as(u64, 1), b.tokens);
-    // After 2500ms total (additional 1500), should have 2 more = 3 tokens.
+    // After another 1500ms (t=2500), 1.5 more tokens accrue: 1 whole +
+    // 0.5 carried into residual. Bucket = 1 + 1 = 2 tokens.
     b.refill(2500);
+    try testing.expectEqual(@as(u64, 2), b.tokens);
+    // Another 500ms (t=3000) tips the residual over to a full token:
+    // residual was 500, +500 = 1000 = 1 whole. Bucket = 2 + 1 = 3.
+    b.refill(3000);
     try testing.expectEqual(@as(u64, 3), b.tokens);
 }
 
