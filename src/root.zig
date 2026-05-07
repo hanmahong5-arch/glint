@@ -43,6 +43,13 @@ pub const state_hash = @import("runtime/state_hash.zig");
 /// Fixed-step 60Hz accumulator (Glenn Fiedler's "Fix Your Timestep").
 pub const time = @import("runtime/time.zig");
 
+/// PICO-8-style PNG steganography for cart carrier images
+/// (160x205 RGBA -> 32800 bytes hidden in low 2 bits of each channel).
+pub const png_steg = @import("cart/png_steg.zig");
+
+/// Cart binary container format (magic + header + TLV sections + CRC32).
+pub const cart_format = @import("cart/format.zig");
+
 /// Top-level engine error union. Per project policy library code does not
 /// panic; every fallible function returns an error from this set or a
 /// caller-injected superset.
