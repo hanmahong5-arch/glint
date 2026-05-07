@@ -22,11 +22,12 @@
     //   - libxmp       (W7)  : .it tracker player
     //   - llama.cpp    (W9)  : NOT vendored; dlopened at runtime
     //   - GekkoNet     (v1.5): rollback netcode
-    .dependencies = .{},
-
-    // Files included in the package hash. Keep this list narrow so that cart
-    // packaging (when we ship glint as a Zig dependency) does not pull dev
-    // metadata into consumer projects.
+    .dependencies = .{
+        .sokol = .{
+            .url = "git+https://github.com/floooh/sokol-zig#6ca71321c91e842fb32a8140802a546e50d8a086",
+            .hash = "sokol-0.1.0-pb1HK9lgNwAAB5SLJlpJQ09PZ2CVydxkNs0KaptLaTUD",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

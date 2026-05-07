@@ -3,6 +3,10 @@ zig-cache/
 zig-out/
 .zig-cache/
 
+# Zig package cache (downloaded deps unpacked here, e.g. zig-pkg/sokol-...)
+zig-pkg/
+zig-pkg-cache/
+
 # Local config / secrets
 .envrc
 .env

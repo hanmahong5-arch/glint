@@ -39,6 +39,8 @@ pub fn main(init: std.process.Init) !void {
         try cmdPack(stdout, argv[2..]);
     } else if (eql(cmd, "replay")) {
         try cmdReplay(stdout, argv[2..]);
+    } else if (eql(cmd, "demo")) {
+        try cmdDemo(stdout);
     } else if (eql(cmd, "help") or eql(cmd, "-h") or eql(cmd, "--help")) {
         try printUsage(stdout);
     } else {
@@ -65,6 +67,7 @@ fn printUsage(w: *Io.Writer) !void {
         \\  glint pack <dir/>          pack a cart directory into .glint.png
         \\  glint replay <inputs.bin> <cart>
         \\                             1000x headless replay; assert state hash invariance
+        \\  glint demo                 open a black 768x768 sokol window (sanity-check)
         \\
         \\see doc/design.md for architecture, doc/dx-reliability-spec.md for cart-author API
         \\
@@ -113,6 +116,13 @@ fn cmdPack(w: *Io.Writer, sub: []const []const u8) !void {
 fn cmdReplay(w: *Io.Writer, sub: []const []const u8) !void {
     _ = sub;
     try w.writeAll("glint replay: stub — determinism harness pending post-W10\n");
+}
+
+fn cmdDemo(w: *Io.Writer) !void {
+    // Flush usage/banner before sokol takes over the console + main thread.
+    try w.writeAll("glint demo: opening sokol window, Esc to quit\n");
+    try w.flush();
+    glint.runDemo();
 }
 
 test "subcommand-name equality discriminator works" {

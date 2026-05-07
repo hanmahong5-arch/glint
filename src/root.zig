@@ -27,6 +27,10 @@ const std = @import("std");
 /// engines.
 pub const VERSION = "0.0.1";
 
+/// Open a black demo window via sokol. Blocks until user closes it (Esc).
+/// Used by `glint demo` for early-development sanity check.
+pub const runDemo = @import("engine/window.zig").runDemo;
+
 /// Top-level engine error union. Per project policy library code does not
 /// panic; every fallible function returns an error from this set or a
 /// caller-injected superset.
