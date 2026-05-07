@@ -31,6 +31,9 @@ pub const VERSION = "0.0.1";
 /// Used by `glint demo` for early-development sanity check.
 pub const runDemo = @import("engine/window.zig").runDemo;
 
+/// Per-frame phase budget tracker (dx-spec §B.1, drives graphics-shed §B.7).
+pub const frame_budget = @import("engine/frame_budget.zig");
+
 /// 128x128 indexed framebuffer + 16-color palette.
 pub const pixel = @import("runtime/pixel.zig");
 
