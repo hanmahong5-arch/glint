@@ -372,10 +372,23 @@ fn runCartHeadless(
     // btnp always return false. RNG seeds from a fixed constant so the
     // determinism contract (same cart -> same hash) holds across hosts.
     var inp: glint.input.State = .{};
+
+    // AI router with the Phase 1 Mock backend. Always-on for headless
+    // runs so cart authors who use ai.ask / ai.poll can iterate without
+    // a manifest cap declaration. When llama.cpp lands the backend
+    // selection moves behind cap policy.
+    var mock_backend = glint.ai_router.MockBackend.init();
+    const router = glint.ai_router.Router.init(alloc, &mock_backend.backend) catch |err| {
+        try w.print("glint run: AI router init failed: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    defer router.deinit();
+
     var ctx: glint.cart_ctx.CartContext = .{
         .fb = fb,
         .inp = &inp,
         .rng = glint.rng.Xorshift32.init(1),
+        .ai = router,
     };
     var vm = glint.lua_vm.VM.init(alloc) catch |err| {
         try w.print("glint run: VM init failed: {s}\n", .{@errorName(err)});

@@ -20,11 +20,13 @@ const std = @import("std");
 const pixel = @import("../runtime/pixel.zig");
 const input = @import("../runtime/input.zig");
 const rng_mod = @import("../runtime/rng.zig");
+const ai_router = @import("../ai/router.zig");
 const VM = @import("vm.zig").VM;
 const api = @import("api.zig");
 const api_gfx = @import("api_gfx.zig");
 const api_input = @import("api_input.zig");
 const api_rng = @import("api_rng.zig");
+const api_ai = @import("api_ai.zig");
 
 pub const CartContext = struct {
     /// 128x128 indexed framebuffer. Cart's `cls` / `pset` write here; the
@@ -40,6 +42,13 @@ pub const CartContext = struct {
     /// Stored by value so each cart gets an isolated, savable RNG state.
     rng: rng_mod.Xorshift32,
 
+    /// AI router backing ai.ask / ai.poll. Optional: null when the cart
+    /// did not declare the `ai` capability (or host policy denied it).
+    /// When null, ai bindings still load but ask is a no-op and poll
+    /// returns nil — carts written for AI-enabled hosts still load on
+    /// plain hosts, they just see a non-talking world.
+    ai: ?*ai_router.Router = null,
+
     /// Install every cart-author binding on `vm` with `self` as the
     /// shared context. Math bindings are stateless and registered first;
     /// the rest reach engine state through this context via Lua closure
@@ -49,5 +58,6 @@ pub const CartContext = struct {
         api_gfx.register(vm, self);
         api_input.register(vm, self);
         api_rng.register(vm, self);
+        api_ai.register(vm, self);
     }
 };

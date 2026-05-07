@@ -87,6 +87,13 @@ pub const cart_ctx = @import("lua/cart_ctx.zig");
 /// Token-bucket rate limiter used by the AI router for tokens-per-sec caps.
 pub const ai_rate_limit = @import("ai/rate_limit.zig");
 
+/// AI router: worker thread + mailbox so cart code can dialog with an
+/// LLM (Mock today, llama.cpp via dlopen in Phase 2).
+pub const ai_router = @import("ai/router.zig");
+
+/// Cart-author AI bindings (ai.ask, ai.poll) — depend on CartContext.ai.
+pub const lua_api_ai = @import("lua/api_ai.zig");
+
 /// Deterministic Q16.16 math + sin/cos/atan2/sqrt LUT (no libm in
 /// determinism-critical paths; satisfies dx-spec §B.5 case #14).
 pub const fixed = @import("runtime/fixed.zig");
