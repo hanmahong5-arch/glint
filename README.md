@@ -23,8 +23,8 @@ on purpose.
 ## status
 
 ⚠️ **pre-alpha** — engine + cart-binary container + manifest TOML + scaffold/pack/run
-CLI all online. Luau VM and LLM router are next; tracked in
-[`doc/roadmap.md`](doc/roadmap.md) on a 12-week MVP plan.
+CLI + sandboxed Luau VM all online. Cart-API binding (cls / pset / btn / sin / ...) and
+LLM router are next; tracked in [`doc/roadmap.md`](doc/roadmap.md) on a 12-week MVP plan.
 
 ## quick try
 

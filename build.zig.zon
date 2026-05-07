@@ -27,6 +27,10 @@
             .url = "git+https://github.com/floooh/sokol-zig#6ca71321c91e842fb32a8140802a546e50d8a086",
             .hash = "sokol-0.1.0-pb1HK9lgNwAAB5SLJlpJQ09PZ2CVydxkNs0KaptLaTUD",
         },
+        .ziglua = .{
+            .url = "https://github.com/natecraddock/ziglua/archive/c4225d8e3b5a2886c2646065d7752a552c134e3c.tar.gz",
+            .hash = "zlua-0.1.0-hGRpC298BQBZ-R18LaiSRcZyfX36wUrsb_MXJUOIIxog",
+        },
     },
     .paths = .{
         "build.zig",

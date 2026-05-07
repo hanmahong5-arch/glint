@@ -24,6 +24,17 @@ pub fn build(b: *std.Build) void {
     });
     const sokol_mod = sokol_dep.module("sokol");
 
+    // ziglua wraps Luau (Roblox's sandboxed Lua dialect). The .lang option
+    // selects the Lua flavour at build time; choosing .luau here makes the
+    // whole `zlua` API surface refer to Luau bytecode + VM. Keeps Luau as
+    // an internal detail: the engine never imports the C headers directly.
+    const ziglua_dep = b.dependency("ziglua", .{
+        .target = target,
+        .optimize = optimize,
+        .lang = .luau,
+    });
+    const zlua_mod = ziglua_dep.module("zlua");
+
     // Public engine library. Anything cart authors or downstream embedders
     // can rely on must be re-exported through src/root.zig.
     const mod = b.addModule("glint", .{
@@ -31,6 +42,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .imports = &.{
             .{ .name = "sokol", .module = sokol_mod },
+            .{ .name = "zlua", .module = zlua_mod },
         },
     });
 

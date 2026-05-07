@@ -62,6 +62,9 @@ pub const capability = @import("cart/capability.zig");
 /// Cart manifest (TOML) parser: text -> Manifest struct used by `glint pack`.
 pub const manifest = @import("cart/manifest.zig");
 
+/// Sandboxed Luau VM wrapper. One per cart; exposes a curated stdlib subset.
+pub const lua_vm = @import("lua/vm.zig");
+
 /// Token-bucket rate limiter used by the AI router for tokens-per-sec caps.
 pub const ai_rate_limit = @import("ai/rate_limit.zig");
 
