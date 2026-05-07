@@ -34,6 +34,9 @@ pub const runDemo = @import("engine/window.zig").runDemo;
 /// Per-frame phase budget tracker (dx-spec §B.1, drives graphics-shed §B.7).
 pub const frame_budget = @import("engine/frame_budget.zig");
 
+/// Crash artifact (.crash) file format: header + TLV body, replay-able.
+pub const crash = @import("replay/crash.zig");
+
 /// 128x128 indexed framebuffer + 16-color palette.
 pub const pixel = @import("runtime/pixel.zig");
 
