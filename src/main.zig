@@ -143,7 +143,87 @@ fn cmdRun(alloc: std.mem.Allocator, io: Io, w: *Io.Writer, sub: []const []const 
     for (cart.sections, 0..) |s, i| {
         try w.print("    [{d}] {s} ({d} bytes)\n", .{ i, sectionTypeName(s.type), s.data.len });
     }
-    try w.writeAll("\n(execution pending Luau VM integration; see doc/roadmap.md W5)\n");
+
+    // Find the code section. Carts without one are inert (e.g. a
+    // metadata-only artefact); fall back to summary-only mode.
+    var code_section: ?[]const u8 = null;
+    for (cart.sections) |s| {
+        if (s.type == .code) {
+            code_section = s.data;
+            break;
+        }
+    }
+    const code = code_section orelse {
+        try w.writeAll("\n(no code section; nothing to execute)\n");
+        return;
+    };
+
+    // Lua's loadString needs a 0-terminated buffer. The cart's code section
+    // is a borrowed slice of `bytes`, so we duplicate-with-NUL into the
+    // arena. ~1 KB extra; well below the 1024 KB cart heap budget.
+    const code_z = alloc.dupeZ(u8, code) catch |err| {
+        try w.print("glint run: out of memory copying code section: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    defer alloc.free(code_z);
+
+    // Headless run: 60 frames at 60 Hz simulated. Builds enough state on
+    // the framebuffer to compute a non-trivial hash; the hash doubles as a
+    // determinism witness for the replay harness (W7+).
+    try runCartHeadless(alloc, w, code_z, 60);
+}
+
+/// Execute a cart's Lua code in a fresh VM with the full cart-author API
+/// surface registered, then call `_init` once and `_update / _draw` for
+/// `frames` iterations. Prints the resulting framebuffer hash so two runs
+/// of the same cart on the same engine version produce identical output.
+fn runCartHeadless(alloc: std.mem.Allocator, w: *Io.Writer, code: [:0]const u8, frames: u32) !void {
+    // Heap-allocate the framebuffer (16 KB) so the stack stays cool.
+    const fb = alloc.create(glint.pixel.Framebuffer) catch |err| {
+        try w.print("glint run: out of memory allocating framebuffer: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    defer alloc.destroy(fb);
+    fb.clear(0);
+
+    var ctx: glint.cart_ctx.CartContext = .{ .fb = fb };
+    var vm = glint.lua_vm.VM.init(alloc) catch |err| {
+        try w.print("glint run: VM init failed: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    defer vm.deinit();
+    ctx.registerApi(&vm);
+
+    // Top-level cart code defines _init / _update / _draw as globals.
+    vm.exec(code) catch |err| {
+        try w.print("\nglint run: cart load failed: {s}\n", .{@errorName(err)});
+        return err;
+    };
+
+    // Each entry-point call is wrapped in `if FN then FN() end` so carts
+    // can omit any of the three (e.g. a static demo with only _draw).
+    vm.exec("if _init then _init() end") catch |err| {
+        try w.print("\nglint run: _init failed: {s}\n", .{@errorName(err)});
+        return err;
+    };
+
+    var i: u32 = 0;
+    while (i < frames) : (i += 1) {
+        vm.exec("if _update then _update() end") catch |err| {
+            try w.print("\nglint run: _update failed at frame {d}: {s}\n", .{ i, @errorName(err) });
+            return err;
+        };
+        vm.exec("if _draw then _draw() end") catch |err| {
+            try w.print("\nglint run: _draw failed at frame {d}: {s}\n", .{ i, @errorName(err) });
+            return err;
+        };
+    }
+
+    // Hash the entire framebuffer pixel array. Same cart + same frame
+    // count must produce the same hash on every supported target — this
+    // is the determinism contract the replay harness checks against.
+    const fb_hash = glint.state_hash.hashBytes(&fb.pixels);
+    try w.print("\nglint run: ran {d} frames; framebuffer hash 0x{x:0>16}\n", .{ frames, fb_hash });
 }
 
 fn cmdDemoCart(alloc: std.mem.Allocator, io: Io, w: *Io.Writer, sub: []const []const u8) !void {

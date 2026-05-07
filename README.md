@@ -22,9 +22,13 @@ on purpose.
 
 ## status
 
-⚠️ **pre-alpha** — engine + cart-binary container + manifest TOML + scaffold/pack/run
-CLI + sandboxed Luau VM all online. Cart-API binding (cls / pset / btn / sin / ...) and
-LLM router are next; tracked in [`doc/roadmap.md`](doc/roadmap.md) on a 12-week MVP plan.
+⚠️ **pre-alpha** — engine + cart-binary container + manifest TOML + scaffold/pack/run CLI
++ sandboxed Luau VM + cart-author math & gfx API (cls / pset / sin / cos / flr / ...)
+all online. `glint run <cart>` executes the cart's `_init` / `_update` / `_draw` for
+60 headless frames and prints a framebuffer hash — same cart yields the same hash
+on every run, the determinism contract the replay harness will check. Input bindings,
+sprite + line + rect drawing, real-time window-mode `_draw`, and the LLM router
+are next; tracked in [`doc/roadmap.md`](doc/roadmap.md) on a 12-week MVP plan.
 
 ## quick try
 
@@ -48,8 +52,9 @@ zig build
 zig build test
 ```
 
-The Luau VM lands in W5 (see [doc/roadmap.md](doc/roadmap.md)); until then `glint run`
-prints the cart summary instead of executing the Lua body.
+`glint run <cart>` already runs the cart's Lua body (60 headless frames, deterministic
+framebuffer hash). Real-time windowed playback + input + AI bindings ride later
+milestones in [doc/roadmap.md](doc/roadmap.md).
 
 ## docs
 

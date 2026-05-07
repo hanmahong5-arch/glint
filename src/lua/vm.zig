@@ -96,12 +96,13 @@ pub const VM = struct {
 /// Called exactly once per VM during `init`.
 fn applySandbox(lua: *zlua.Lua) void {
     // Open only the libraries cart authors are allowed to use.
+    // (Luau already exposes bit32 + buffer via openBase, no separate
+    // openBit32 — that helper is gated to Lua 5.2/LuaJIT.)
     lua.openBase();
     lua.openString();
     lua.openTable();
     lua.openMath();
     lua.openCoroutine();
-    lua.openBit32();
 
     // The base library re-exposes a handful of dynamic-load functions and
     // file IO entry points. Nil them so the cart cannot escape the sandbox
