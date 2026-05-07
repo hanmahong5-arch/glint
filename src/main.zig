@@ -38,7 +38,7 @@ pub fn main(init: std.process.Init) !void {
     } else if (eql(cmd, "pack")) {
         try cmdPack(arena, io, stdout, argv[2..]);
     } else if (eql(cmd, "replay")) {
-        try cmdReplay(stdout, argv[2..]);
+        try cmdReplay(arena, io, stdout, argv[2..]);
     } else if (eql(cmd, "demo")) {
         try cmdDemo(stdout);
     } else if (eql(cmd, "demo-cart")) {
@@ -69,8 +69,7 @@ fn printUsage(w: *Io.Writer) !void {
         \\  glint run <cart>           run a cart (.glint or .glint.png)
         \\  glint new <name>           scaffold new cart project
         \\  glint pack <dir/>          pack a cart directory (manifest.toml + code.lua) into .glint
-        \\  glint replay <inputs.bin> <cart>
-        \\                             1000x headless replay; assert state hash invariance
+        \\  glint replay <path.crash>  decode + pretty-print a crash artifact
         \\  glint demo                 open a 768x768 sokol palette-cycle window
         \\  glint play <cart>          open the cart in a real-time window (60Hz _draw)
         \\  glint demo-cart <out>      write a sample .glint binary for testing
@@ -147,13 +146,16 @@ fn cmdRun(alloc: std.mem.Allocator, io: Io, w: *Io.Writer, sub: []const []const 
         try w.print("    [{d}] {s} ({d} bytes)\n", .{ i, sectionTypeName(s.type), s.data.len });
     }
 
-    // Find the code section. Carts without one are inert (e.g. a
-    // metadata-only artefact); fall back to summary-only mode.
+    // Find code + manifest sections in one pass. Code is mandatory for
+    // execution; the manifest text is preserved into any emitted .crash
+    // artifact for postmortem context (schema_version, declared caps, ...).
     var code_section: ?[]const u8 = null;
+    var manifest_section: []const u8 = "";
     for (cart.sections) |s| {
-        if (s.type == .code) {
-            code_section = s.data;
-            break;
+        switch (s.type) {
+            .code => code_section = s.data,
+            .meta => manifest_section = s.data,
+            else => {},
         }
     }
     const code = code_section orelse {
@@ -170,10 +172,29 @@ fn cmdRun(alloc: std.mem.Allocator, io: Io, w: *Io.Writer, sub: []const []const 
     };
     defer alloc.free(code_z);
 
+    // Crash artifact path sits next to the cart with a .crash extension so
+    // postmortem files don't collide with their source carts. Failure here
+    // is OOM only; if the cart never errors the file is never written.
+    const crash_path = defaultCrashPath(alloc, path) catch |err| {
+        try w.print("glint run: out of memory deriving crash path: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    defer alloc.free(crash_path);
+
+    const sink: CrashSink = .{
+        .io = io,
+        .cwd = cwd,
+        .out_path = crash_path,
+        .cart_id = cart.header.cart_id,
+        .cart_blob = bytes,
+        .manifest_toml = manifest_section,
+        .glint_version = VERSION,
+    };
+
     // Headless run: 60 frames at 60 Hz simulated. Builds enough state on
     // the framebuffer to compute a non-trivial hash; the hash doubles as a
     // determinism witness for the replay harness (W7+).
-    try runCartHeadless(alloc, w, code_z, 60);
+    try runCartHeadless(alloc, w, code_z, 60, sink);
 }
 
 fn cmdPlay(alloc: std.mem.Allocator, io: Io, w: *Io.Writer, sub: []const []const u8) !void {
@@ -217,11 +238,128 @@ fn cmdPlay(alloc: std.mem.Allocator, io: Io, w: *Io.Writer, sub: []const []const
     glint.runCart(alloc, code_z);
 }
 
+/// Cart pipeline phase the engine was in when a Lua-side error landed.
+/// Embedded in the `cause` and `log_tail` records of any emitted crash so
+/// postmortems distinguish "syntax broke at load" from "runtime broke at
+/// frame 47 inside _draw".
+const Phase = enum { load, init, update, draw };
+
+/// Context the run loop needs to write a postmortem `.crash` artifact.
+/// Optional in `runCartHeadless` so unit tests can drive the loop without
+/// touching the filesystem.
+const CrashSink = struct {
+    io: Io,
+    cwd: Io.Dir,
+    /// Where the artifact gets written. Caller owns the bytes.
+    out_path: []const u8,
+    /// Cart binary's identity (xxh3-64 lo, zeros hi for now).
+    cart_id: u128,
+    /// Original cart bytes, used to write the cart_blob_sha256 record.
+    cart_blob: []const u8,
+    /// Cart's manifest TOML text, copied into the artifact verbatim.
+    /// Empty slice if the cart has no meta section (legacy / smoke-test
+    /// artefacts).
+    manifest_toml: []const u8,
+    /// Engine version string written into the crash header's glint_ver
+    /// field. Always `VERSION` in production; explicit so tests can override.
+    glint_version: []const u8,
+};
+
+/// Crash artifacts are bounded by cart size + a few small TLV records, so
+/// 1 MB is generous. Used by the replay reader to refuse pathological
+/// inputs without scanning them.
+const MAX_CRASH_BYTES: u64 = 1 << 20;
+
+/// Derive `<cart_basename>.crash` from a cart path, stripping whatever
+/// extension the cart has (.glint / .glint.png / etc.). When the path has
+/// no extension, append `.crash` directly. Caller frees.
+fn defaultCrashPath(alloc: std.mem.Allocator, cart_path: []const u8) ![]u8 {
+    const ext = std.fs.path.extension(cart_path);
+    if (ext.len > 0) {
+        const base = cart_path[0 .. cart_path.len - ext.len];
+        return std.fmt.allocPrint(alloc, "{s}.crash", .{base});
+    }
+    return std.fmt.allocPrint(alloc, "{s}.crash", .{cart_path});
+}
+
+/// Build + write a crash artifact for a cart-side failure. Best-effort:
+/// any error inside this function is logged via `w` and otherwise
+/// swallowed, so the original cart error is the one returned upstream.
+fn emitCrash(
+    alloc: std.mem.Allocator,
+    w: *Io.Writer,
+    fb: *glint.pixel.Framebuffer,
+    sink: CrashSink,
+    phase: Phase,
+    frame: u32,
+    err: anyerror,
+    lua_msg: []const u8,
+) void {
+    var body = glint.crash.TlvWriter.init(alloc);
+    defer body.deinit();
+
+    var cart_id_bytes: [16]u8 = undefined;
+    std.mem.writeInt(u128, &cart_id_bytes, sink.cart_id, .little);
+    body.write(.cart_id, &cart_id_bytes) catch return;
+
+    var sha: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(sink.cart_blob, &sha, .{});
+    body.write(.cart_blob_sha256, &sha) catch return;
+
+    if (sink.manifest_toml.len > 0) {
+        body.write(.manifest_toml, sink.manifest_toml) catch return;
+    }
+
+    var fb_hash_bytes: [8]u8 = undefined;
+    const fb_hash = glint.state_hash.hashBytes(&fb.pixels);
+    std.mem.writeInt(u64, &fb_hash_bytes, fb_hash, .little);
+    body.write(.state_hash_trace, &fb_hash_bytes) catch return;
+
+    const cause_text = std.fmt.allocPrint(
+        alloc,
+        "{s}: {s}: {s}",
+        .{ @tagName(phase), @errorName(err), lua_msg },
+    ) catch return;
+    defer alloc.free(cause_text);
+    body.write(.cause, cause_text) catch return;
+
+    const log_text = std.fmt.allocPrint(
+        alloc,
+        "phase={s} frame={d} err={s}",
+        .{ @tagName(phase), frame, @errorName(err) },
+    ) catch return;
+    defer alloc.free(log_text);
+    body.write(.log_tail, log_text) catch return;
+
+    const body_bytes = body.finalize() catch return;
+    defer alloc.free(body_bytes);
+
+    const artifact = glint.crash.encode(alloc, sink.glint_version, body_bytes) catch return;
+    defer alloc.free(artifact);
+
+    sink.cwd.writeFile(sink.io, .{ .sub_path = sink.out_path, .data = artifact }) catch |e| {
+        w.print("  (crash artifact write failed: {s})\n", .{@errorName(e)}) catch {};
+        return;
+    };
+
+    w.print("  crash artifact: {s} ({d} B)\n", .{ sink.out_path, artifact.len }) catch {};
+}
+
 /// Execute a cart's Lua code in a fresh VM with the full cart-author API
 /// surface registered, then call `_init` once and `_update / _draw` for
 /// `frames` iterations. Prints the resulting framebuffer hash so two runs
 /// of the same cart on the same engine version produce identical output.
-fn runCartHeadless(alloc: std.mem.Allocator, w: *Io.Writer, code: [:0]const u8, frames: u32) !void {
+///
+/// On failure inside any cart entry point, if `crash_sink` is non-null an
+/// artifact is written to `crash_sink.out_path` capturing cart identity,
+/// the failure cause, and the framebuffer hash at the moment of failure.
+fn runCartHeadless(
+    alloc: std.mem.Allocator,
+    w: *Io.Writer,
+    code: [:0]const u8,
+    frames: u32,
+    crash_sink: ?CrashSink,
+) !void {
     // Heap-allocate the framebuffer (16 KB) so the stack stays cool.
     const fb = alloc.create(glint.pixel.Framebuffer) catch |err| {
         try w.print("glint run: out of memory allocating framebuffer: {s}\n", .{@errorName(err)});
@@ -248,14 +386,16 @@ fn runCartHeadless(alloc: std.mem.Allocator, w: *Io.Writer, code: [:0]const u8, 
 
     // Top-level cart code defines _init / _update / _draw as globals.
     vm.exec(code) catch |err| {
-        try w.print("\nglint run: cart load failed: {s}\n", .{@errorName(err)});
+        try w.print("\nglint run: cart load failed: {s}\n  Lua: {s}\n", .{ @errorName(err), vm.lastError() });
+        if (crash_sink) |s| emitCrash(alloc, w, fb, s, .load, 0, err, vm.lastError());
         return err;
     };
 
     // Each entry-point call is wrapped in `if FN then FN() end` so carts
     // can omit any of the three (e.g. a static demo with only _draw).
     vm.exec("if _init then _init() end") catch |err| {
-        try w.print("\nglint run: _init failed: {s}\n", .{@errorName(err)});
+        try w.print("\nglint run: _init failed: {s}\n  Lua: {s}\n", .{ @errorName(err), vm.lastError() });
+        if (crash_sink) |s| emitCrash(alloc, w, fb, s, .init, 0, err, vm.lastError());
         return err;
     };
 
@@ -266,6 +406,7 @@ fn runCartHeadless(alloc: std.mem.Allocator, w: *Io.Writer, code: [:0]const u8, 
                 "\nglint run: _update failed at frame {d}: {s}\n  Lua: {s}\n",
                 .{ i, @errorName(err), vm.lastError() },
             );
+            if (crash_sink) |s| emitCrash(alloc, w, fb, s, .update, i, err, vm.lastError());
             return err;
         };
         vm.exec("if _draw then _draw() end") catch |err| {
@@ -273,6 +414,7 @@ fn runCartHeadless(alloc: std.mem.Allocator, w: *Io.Writer, code: [:0]const u8, 
                 "\nglint run: _draw failed at frame {d}: {s}\n  Lua: {s}\n",
                 .{ i, @errorName(err), vm.lastError() },
             );
+            if (crash_sink) |s| emitCrash(alloc, w, fb, s, .draw, i, err, vm.lastError());
             return err;
         };
     }
@@ -590,9 +732,114 @@ fn cmdPack(alloc: std.mem.Allocator, io: Io, w: *Io.Writer, sub: []const []const
     });
 }
 
-fn cmdReplay(w: *Io.Writer, sub: []const []const u8) !void {
-    _ = sub;
-    try w.writeAll("glint replay: stub — determinism harness pending post-W10\n");
+fn cmdReplay(alloc: std.mem.Allocator, io: Io, w: *Io.Writer, sub: []const []const u8) !void {
+    if (sub.len < 1) {
+        try w.writeAll("glint replay: missing artifact path. usage: glint replay <path.crash>\n");
+        return error.MissingArgument;
+    }
+    const path = sub[0];
+
+    const cwd = Io.Dir.cwd();
+    const bytes = cwd.readFileAlloc(io, path, alloc, .limited(MAX_CRASH_BYTES)) catch |err| {
+        try w.print("glint replay: cannot read '{s}': {s}\n", .{ path, @errorName(err) });
+        return err;
+    };
+    defer alloc.free(bytes);
+
+    const decoded = glint.crash.decode(bytes) catch |err| {
+        try w.print("glint replay: invalid crash artifact: {s}\n", .{@errorName(err)});
+        return err;
+    };
+
+    try w.print(
+        \\glint crash artifact: {s}
+        \\  format_ver:  {d}
+        \\  glint_ver:   {s}
+        \\  flags:       0x{x:0>4}
+        \\  body_len:    {d} B
+        \\  body_crc32:  0x{x:0>8}
+        \\  records:
+        \\
+    , .{
+        path,
+        decoded.header.format_ver,
+        trimAscii(&decoded.header.glint_ver),
+        decoded.header.flags,
+        decoded.header.body_len,
+        decoded.header.body_crc32,
+    });
+
+    var r = glint.crash.TlvReader.init(decoded.body);
+    var idx: usize = 0;
+    while (try r.next()) |rec| : (idx += 1) {
+        try printTlvRecord(w, idx, rec);
+    }
+}
+
+/// Pretty-print one TLV record. Header line for every tag; the payload
+/// preview is shaped to the tag's known semantics (hex for IDs, quoted
+/// text for human-readable causes, bar-prefixed lines for the manifest).
+fn printTlvRecord(w: *Io.Writer, idx: usize, rec: glint.crash.TlvReader.Record) !void {
+    try w.print("    [{d}] {s} (tag=0x{x:0>4}, {d} B)\n", .{
+        idx, tlvTagName(rec.tag), @intFromEnum(rec.tag), rec.payload.len,
+    });
+    switch (rec.tag) {
+        .cart_id => if (rec.payload.len == 16) {
+            const cid = std.mem.readInt(u128, rec.payload[0..16], .little);
+            try w.print("        0x{x:0>32}\n", .{cid});
+        },
+        .cart_blob_sha256 => {
+            try w.writeAll("        ");
+            for (rec.payload) |b| try w.print("{x:0>2}", .{b});
+            try w.writeByte('\n');
+        },
+        .state_hash_trace => if (rec.payload.len == 8) {
+            const h = std.mem.readInt(u64, rec.payload[0..8], .little);
+            try w.print("        0x{x:0>16}\n", .{h});
+        },
+        .cause, .log_tail, .cart_version => {
+            const cap: usize = 200;
+            const slice = rec.payload[0..@min(rec.payload.len, cap)];
+            try w.print("        \"{s}\"{s}\n", .{ slice, if (rec.payload.len > cap) "..." else "" });
+        },
+        .manifest_toml => {
+            // Cap at six lines × 80 chars: enough to identify the cart at
+            // a glance without flooding the postmortem report.
+            var lines: usize = 0;
+            var it = std.mem.splitScalar(u8, rec.payload, '\n');
+            while (it.next()) |raw_line| : (lines += 1) {
+                if (lines >= 6) {
+                    try w.writeAll("        ...\n");
+                    break;
+                }
+                const slice = raw_line[0..@min(raw_line.len, 80)];
+                try w.print("        | {s}\n", .{slice});
+            }
+        },
+        else => {},
+    }
+}
+
+/// Map a `crash.Tag` to its dx-spec name. Open-enum unknown values get
+/// a placeholder so future engine versions don't break replay's output.
+fn tlvTagName(t: glint.crash.Tag) []const u8 {
+    return switch (t) {
+        .cart_id => "cart_id",
+        .cart_version => "cart_version",
+        .cart_blob_sha256 => "cart_blob_sha256",
+        .manifest_toml => "manifest_toml",
+        .caps_granted => "caps_granted",
+        .input_stream => "input_stream",
+        .state_snapshot => "state_snapshot",
+        .state_hash_trace => "state_hash_trace",
+        .log_tail => "log_tail",
+        .ai_inbox_snapshot => "ai_inbox_snapshot",
+        .ai_model_info => "ai_model_info",
+        .net_session_id => "net_session_id",
+        .net_input_history => "net_input_history",
+        .cause => "cause",
+        _ => "(unknown)",
+    };
 }
 
 fn cmdDemo(w: *Io.Writer) !void {
@@ -612,4 +859,24 @@ test "subcommand-name equality discriminator works" {
 test "version constant is non-empty and starts with a digit" {
     try std.testing.expect(VERSION.len > 0);
     try std.testing.expect(std.ascii.isDigit(VERSION[0]));
+}
+
+test "defaultCrashPath strips a known cart extension" {
+    const out = try defaultCrashPath(std.testing.allocator, "samples/demo/demo.glint");
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("samples/demo/demo.crash", out);
+}
+
+test "defaultCrashPath without extension appends .crash" {
+    const out = try defaultCrashPath(std.testing.allocator, "demo");
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("demo.crash", out);
+}
+
+test "defaultCrashPath strips just the trailing extension" {
+    // .glint.png is two extensions; we strip the last one (.png) so a
+    // PNG-stego cart's crash sits next to it as `<base>.glint.crash`.
+    const out = try defaultCrashPath(std.testing.allocator, "carts/abc.glint.png");
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("carts/abc.glint.crash", out);
 }
