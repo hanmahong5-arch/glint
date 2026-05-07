@@ -68,6 +68,12 @@ pub const lua_vm = @import("lua/vm.zig");
 /// Cart-author API bindings (math + helpers; gfx/input/audio in later phases).
 pub const lua_api = @import("lua/api.zig");
 
+/// Cart-author graphics bindings (cls, pset, ...) — depend on CartContext.
+pub const lua_api_gfx = @import("lua/api_gfx.zig");
+
+/// Per-cart runtime context: shared engine state pointed to by Lua bindings.
+pub const cart_ctx = @import("lua/cart_ctx.zig");
+
 /// Token-bucket rate limiter used by the AI router for tokens-per-sec caps.
 pub const ai_rate_limit = @import("ai/rate_limit.zig");
 
