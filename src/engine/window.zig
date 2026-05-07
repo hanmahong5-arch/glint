@@ -33,6 +33,7 @@ const slog = sokol.log;
 
 const pixel = @import("../runtime/pixel.zig");
 const input = @import("../runtime/input.zig");
+const rng_mod = @import("../runtime/rng.zig");
 const lua_vm = @import("../lua/vm.zig");
 const cart_ctx_mod = @import("../lua/cart_ctx.zig");
 
@@ -137,7 +138,11 @@ export fn demoInit() void {
             return;
         };
         state.cart_vm = vm;
-        state.cart_runtime = .{ .fb = &state.fb };
+        state.cart_runtime = .{
+            .fb = &state.fb,
+            .inp = &state.inp,
+            .rng = rng_mod.Xorshift32.init(1),
+        };
         state.cart_runtime.registerApi(&state.cart_vm.?);
         state.cart_vm.?.exec(state.cart_code) catch |err| {
             std.debug.print("glint: cart load failed: {s}\n", .{@errorName(err)});

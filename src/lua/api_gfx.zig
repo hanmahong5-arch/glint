@@ -17,6 +17,8 @@
 const std = @import("std");
 const zlua = @import("zlua");
 const pixel = @import("../runtime/pixel.zig");
+const input = @import("../runtime/input.zig");
+const rng_mod = @import("../runtime/rng.zig");
 const VM = @import("vm.zig").VM;
 const CartContext = @import("cart_ctx.zig").CartContext;
 
@@ -99,8 +101,13 @@ fn c_pset(state: ?*zlua.LuaState) callconv(.c) c_int {
 
 const testing = std.testing;
 
+/// Test helper: build a CartContext with a stub input + RNG. Uses a
+/// thread-local input.State so each test gets independent button state.
+threadlocal var test_inp: input.State = .{};
+
 fn freshContext(fb: *pixel.Framebuffer) CartContext {
-    return .{ .fb = fb };
+    test_inp = .{};
+    return .{ .fb = fb, .inp = &test_inp, .rng = rng_mod.Xorshift32.init(1) };
 }
 
 test "cls() defaults to color 0" {

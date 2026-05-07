@@ -75,6 +75,12 @@ pub const lua_api = @import("lua/api.zig");
 /// Cart-author graphics bindings (cls, pset, ...) — depend on CartContext.
 pub const lua_api_gfx = @import("lua/api_gfx.zig");
 
+/// Cart-author input bindings (btn, btnp) — depend on CartContext.
+pub const lua_api_input = @import("lua/api_input.zig");
+
+/// Cart-author RNG bindings (rnd, srand) — depend on CartContext.
+pub const lua_api_rng = @import("lua/api_rng.zig");
+
 /// Per-cart runtime context: shared engine state pointed to by Lua bindings.
 pub const cart_ctx = @import("lua/cart_ctx.zig");
 

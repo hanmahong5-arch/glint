@@ -230,7 +230,15 @@ fn runCartHeadless(alloc: std.mem.Allocator, w: *Io.Writer, code: [:0]const u8, 
     defer alloc.destroy(fb);
     fb.clear(0);
 
-    var ctx: glint.cart_ctx.CartContext = .{ .fb = fb };
+    // Headless run has no real input source; use a zero State so btn /
+    // btnp always return false. RNG seeds from a fixed constant so the
+    // determinism contract (same cart -> same hash) holds across hosts.
+    var inp: glint.input.State = .{};
+    var ctx: glint.cart_ctx.CartContext = .{
+        .fb = fb,
+        .inp = &inp,
+        .rng = glint.rng.Xorshift32.init(1),
+    };
     var vm = glint.lua_vm.VM.init(alloc) catch |err| {
         try w.print("glint run: VM init failed: {s}\n", .{@errorName(err)});
         return err;
