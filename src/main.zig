@@ -43,6 +43,8 @@ pub fn main(init: std.process.Init) !void {
         try cmdDemo(stdout);
     } else if (eql(cmd, "demo-cart")) {
         try cmdDemoCart(arena, io, stdout, argv[2..]);
+    } else if (eql(cmd, "play")) {
+        try cmdPlay(arena, io, stdout, argv[2..]);
     } else if (eql(cmd, "help") or eql(cmd, "-h") or eql(cmd, "--help")) {
         try printUsage(stdout);
     } else {
@@ -70,6 +72,7 @@ fn printUsage(w: *Io.Writer) !void {
         \\  glint replay <inputs.bin> <cart>
         \\                             1000x headless replay; assert state hash invariance
         \\  glint demo                 open a 768x768 sokol palette-cycle window
+        \\  glint play <cart>          open the cart in a real-time window (60Hz _draw)
         \\  glint demo-cart <out>      write a sample .glint binary for testing
         \\
         \\see doc/design.md for architecture, doc/dx-reliability-spec.md for cart-author API
@@ -171,6 +174,47 @@ fn cmdRun(alloc: std.mem.Allocator, io: Io, w: *Io.Writer, sub: []const []const 
     // the framebuffer to compute a non-trivial hash; the hash doubles as a
     // determinism witness for the replay harness (W7+).
     try runCartHeadless(alloc, w, code_z, 60);
+}
+
+fn cmdPlay(alloc: std.mem.Allocator, io: Io, w: *Io.Writer, sub: []const []const u8) !void {
+    if (sub.len < 1) {
+        try w.writeAll("glint play: missing cart path. usage: glint play <cart>\n");
+        return error.MissingArgument;
+    }
+    const path = sub[0];
+
+    const cwd = Io.Dir.cwd();
+    const bytes = cwd.readFileAlloc(io, path, alloc, .limited(glint.cart_format.MAX_CART_BYTES)) catch |err| {
+        try w.print("glint play: cannot read '{s}': {s}\n", .{ path, @errorName(err) });
+        return err;
+    };
+    // Don't free bytes: the decoded cart's section data borrows from this
+    // buffer, and the borrowed code slice is what we hand to the VM. The
+    // arena reclaims it at process exit, after sapp.run returns.
+
+    const cart = glint.cart_format.decode(alloc, bytes) catch |err| {
+        try w.print("glint play: decode failed: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    // Same lifetime story as bytes: keep cart alive for sapp.run.
+
+    var code_slice: ?[]const u8 = null;
+    for (cart.sections) |s| {
+        if (s.type == .code) {
+            code_slice = s.data;
+            break;
+        }
+    }
+    const code = code_slice orelse {
+        try w.writeAll("glint play: cart has no code section; nothing to run\n");
+        return error.NoCodeSection;
+    };
+    const code_z = try alloc.dupeZ(u8, code);
+    // Same: don't free; the VM holds borrowed substrings of code_z.
+
+    try w.print("glint play: opening window for '{s}' (Esc to quit)\n", .{path});
+    try w.flush();
+    glint.runCart(alloc, code_z);
 }
 
 /// Execute a cart's Lua code in a fresh VM with the full cart-author API

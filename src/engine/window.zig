@@ -33,16 +33,24 @@ const slog = sokol.log;
 
 const pixel = @import("../runtime/pixel.zig");
 const input = @import("../runtime/input.zig");
+const lua_vm = @import("../lua/vm.zig");
+const cart_ctx_mod = @import("../lua/cart_ctx.zig");
 
 const FB_W: u16 = pixel.Framebuffer.WIDTH;
 const FB_H: u16 = pixel.Framebuffer.HEIGHT;
 const FB_PIXELS: u32 = pixel.Framebuffer.PIXELS;
+
+/// Window content selector. `runDemo()` opens in `.demo` mode (procedural
+/// palette+sprite test pattern); `runCart()` opens in `.cart` mode and
+/// drives the framebuffer from the cart's Lua _draw callback.
+const Mode = enum { demo, cart };
 
 /// Module-level state in a struct's `var` block. The C-callbacks below have
 /// no userdata channel, so this is the canonical "globals for the demo"
 /// home. Once the engine kernel is real (W6), this state moves into a
 /// proper Engine struct with explicit pass-through.
 const state = struct {
+    var mode: Mode = .demo;
     var pass_action: sg.PassAction = .{};
     var inp: input.State = .{};
 
@@ -63,6 +71,20 @@ const state = struct {
     /// Highlight sprite world-position (in framebuffer pixels), moved by arrows.
     var sprite_x: i32 = 60;
     var sprite_y: i32 = 60;
+
+    // ---- cart mode bits (unused in demo mode) ----
+    /// Cart's Lua source bytes. Owned by main.zig's arena across runCart()'s
+    /// blocking sapp.run lifetime. NUL-terminated so loadString accepts it.
+    var cart_code: [:0]const u8 = "";
+    /// Allocator passed by the embedder; used to build the VM and (later)
+    /// any per-cart engine state. Required to outlive sapp.run().
+    var cart_alloc: std.mem.Allocator = undefined;
+    /// VM driving the cart's _init / _update / _draw. Initialized in
+    /// demoInit when mode == .cart, deinitialized in demoCleanup.
+    var cart_vm: ?lua_vm.VM = null;
+    /// Engine state pointer the cart-author API bindings reach for via
+    /// Lua closure upvalues. Lives in static storage; safe forever.
+    var cart_runtime: cart_ctx_mod.CartContext = undefined;
 };
 
 export fn demoInit() void {
@@ -102,27 +124,39 @@ export fn demoInit() void {
         .load_action = .CLEAR,
         .clear_value = palToClearColor(0),
     };
+
+    if (state.mode == .cart) {
+        // Boot the cart: spin up a sandboxed VM, register the cart-author
+        // API surface bound to our framebuffer, run the top-level cart
+        // source (defines _init/_update/_draw as globals), then call _init
+        // exactly once. Errors fall through to a stderr log + clear
+        // framebuffer so the user sees a recoverable failure rather than
+        // a closed window.
+        const vm = lua_vm.VM.init(state.cart_alloc) catch |err| {
+            std.debug.print("glint: VM init failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        state.cart_vm = vm;
+        state.cart_runtime = .{ .fb = &state.fb };
+        state.cart_runtime.registerApi(&state.cart_vm.?);
+        state.cart_vm.?.exec(state.cart_code) catch |err| {
+            std.debug.print("glint: cart load failed: {s}\n", .{@errorName(err)});
+        };
+        state.cart_vm.?.exec("if _init then _init() end") catch |err| {
+            std.debug.print("glint: cart _init failed: {s}\n", .{@errorName(err)});
+        };
+    }
 }
 
 export fn demoFrame() void {
     input.beginFrame(&state.inp);
 
-    // ---- input ----
-    if (state.inp.wasPressed(.a)) state.paused = !state.paused;
-    if (state.inp.wasPressed(.b)) state.pattern +%= 1;
-    // Continuous d-pad: move the highlight sprite each frame the key is held.
-    if (state.inp.isHeld(.left)) state.sprite_x -= 2;
-    if (state.inp.isHeld(.right)) state.sprite_x += 2;
-    if (state.inp.isHeld(.up)) state.sprite_y -= 2;
-    if (state.inp.isHeld(.down)) state.sprite_y += 2;
-    state.sprite_x = std.math.clamp(state.sprite_x, 0, @as(i32, FB_W) - 8);
-    state.sprite_y = std.math.clamp(state.sprite_y, 0, @as(i32, FB_H) - 8);
-
     if (!state.paused) state.frame_counter +%= 1;
 
-    // ---- draw indexed framebuffer ----
-    drawTestPattern(&state.fb, state.pattern, state.frame_counter);
-    drawHighlightSprite(&state.fb, state.sprite_x, state.sprite_y);
+    switch (state.mode) {
+        .demo => demoFramePopulateFb(),
+        .cart => cartFramePopulateFb(),
+    }
 
     // Translate indexed pixels to RGBA8 via palette lookup.
     fbToRgba(&state.fb, &state.rgba);
@@ -160,11 +194,47 @@ export fn demoFrame() void {
 }
 
 export fn demoCleanup() void {
+    if (state.mode == .cart) {
+        if (state.cart_vm) |*vm| vm.deinit();
+        state.cart_vm = null;
+    }
     sg.destroySampler(state.fb_sampler);
     sg.destroyView(state.fb_view);
     sg.destroyImage(state.fb_image);
     sgl.shutdown();
     sg.shutdown();
+}
+
+/// Demo-mode per-frame: read input, animate the procedural test pattern.
+/// (Pre-cart-runtime placeholder; will retire once the engine kernel
+/// formalizes a "scene" concept that subsumes both demo and cart paths.)
+fn demoFramePopulateFb() void {
+    if (state.inp.wasPressed(.a)) state.paused = !state.paused;
+    if (state.inp.wasPressed(.b)) state.pattern +%= 1;
+    if (state.inp.isHeld(.left)) state.sprite_x -= 2;
+    if (state.inp.isHeld(.right)) state.sprite_x += 2;
+    if (state.inp.isHeld(.up)) state.sprite_y -= 2;
+    if (state.inp.isHeld(.down)) state.sprite_y += 2;
+    state.sprite_x = std.math.clamp(state.sprite_x, 0, @as(i32, FB_W) - 8);
+    state.sprite_y = std.math.clamp(state.sprite_y, 0, @as(i32, FB_H) - 8);
+
+    drawTestPattern(&state.fb, state.pattern, state.frame_counter);
+    drawHighlightSprite(&state.fb, state.sprite_x, state.sprite_y);
+}
+
+/// Cart-mode per-frame: drive _update + _draw on the cart's VM. Lua
+/// errors during a frame print to stderr but do not bring the window
+/// down — the framebuffer reflects whatever the cart wrote up to the
+/// failure point, and the user can iterate.
+fn cartFramePopulateFb() void {
+    if (state.cart_vm == null) return;
+    var vm = &state.cart_vm.?;
+    vm.exec("if _update then _update() end") catch |err| {
+        std.debug.print("glint: _update failed: {s}\n", .{@errorName(err)});
+    };
+    vm.exec("if _draw then _draw() end") catch |err| {
+        std.debug.print("glint: _draw failed: {s}\n", .{@errorName(err)});
+    };
 }
 
 export fn demoEvent(ev: ?*const sapp.Event) void {
@@ -282,9 +352,11 @@ fn drawHighlightSprite(fb: *pixel.Framebuffer, x: i32, y: i32) void {
     }
 }
 
-/// Open a 768x768 window. Blocks until the user closes it. Safe to call
-/// from the OS main thread on Windows / macOS / Linux.
+/// Open a 768x768 window in demo mode (palette test pattern). Blocks
+/// until the user closes it. Safe to call from the OS main thread on
+/// Windows / macOS / Linux.
 pub fn runDemo() void {
+    state.mode = .demo;
     sapp.run(.{
         .init_cb = demoInit,
         .frame_cb = demoFrame,
@@ -294,6 +366,27 @@ pub fn runDemo() void {
         .height = 768,
         .icon = .{ .sokol_default = true },
         .window_title = "glint v0.0.1 — demo (arrows: move, Z: pause, X: pattern, Esc: quit)",
+        .logger = .{ .func = slog.func },
+        .win32 = .{ .console_attach = true },
+    });
+}
+
+/// Open a 768x768 window in cart mode and run the cart's _draw at 60 Hz
+/// for as long as the user keeps the window open. `code` must outlive
+/// this call (alive for the duration of sapp.run). Esc closes the window.
+pub fn runCart(alloc: std.mem.Allocator, code: [:0]const u8) void {
+    state.mode = .cart;
+    state.cart_alloc = alloc;
+    state.cart_code = code;
+    sapp.run(.{
+        .init_cb = demoInit,
+        .frame_cb = demoFrame,
+        .cleanup_cb = demoCleanup,
+        .event_cb = demoEvent,
+        .width = 768,
+        .height = 768,
+        .icon = .{ .sokol_default = true },
+        .window_title = "glint v0.0.1 — cart (Esc: quit)",
         .logger = .{ .func = slog.func },
         .win32 = .{ .console_attach = true },
     });

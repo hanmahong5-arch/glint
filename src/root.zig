@@ -31,6 +31,10 @@ pub const VERSION = "0.0.1";
 /// Used by `glint demo` for early-development sanity check.
 pub const runDemo = @import("engine/window.zig").runDemo;
 
+/// Open a windowed cart-playback session driving _update / _draw at 60 Hz.
+/// Used by `glint play <cart>`. Blocks until user closes (Esc).
+pub const runCart = @import("engine/window.zig").runCart;
+
 /// Per-frame phase budget tracker (dx-spec §B.1, drives graphics-shed §B.7).
 pub const frame_budget = @import("engine/frame_budget.zig");
 
