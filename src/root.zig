@@ -59,6 +59,9 @@ pub const cart_format = @import("cart/format.zig");
 /// Cart capability declaration + host-policy resolution (dx-spec §A.4).
 pub const capability = @import("cart/capability.zig");
 
+/// Token-bucket rate limiter used by the AI router for tokens-per-sec caps.
+pub const ai_rate_limit = @import("ai/rate_limit.zig");
+
 /// Deterministic Q16.16 math + sin/cos/atan2/sqrt LUT (no libm in
 /// determinism-critical paths; satisfies dx-spec §B.5 case #14).
 pub const fixed = @import("runtime/fixed.zig");
