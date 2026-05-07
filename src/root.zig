@@ -66,6 +66,12 @@ pub const ai_rate_limit = @import("ai/rate_limit.zig");
 /// determinism-critical paths; satisfies dx-spec §B.5 case #14).
 pub const fixed = @import("runtime/fixed.zig");
 
+/// Deterministic xorshift32 PRNG (cart-author rnd()/srand() backing).
+pub const rng = @import("runtime/rng.zig");
+
+/// Cart-author math helpers (mid / lerp / saturate / approachTo / smoothstep).
+pub const math = @import("runtime/math.zig");
+
 /// Top-level engine error union. Per project policy library code does not
 /// panic; every fallible function returns an error from this set or a
 /// caller-injected superset.
