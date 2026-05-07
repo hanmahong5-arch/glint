@@ -1,0 +1,28 @@
+# Default to LF for text; force LF on source/build files for cross-platform repro.
+* text=auto eol=lf
+
+# Zig source / build manifests
+*.zig       text eol=lf
+*.zon       text eol=lf
+
+# Cart authoring
+*.luau      text eol=lf
+*.lua       text eol=lf
+*.toml      text eol=lf
+
+# Docs
+*.md        text eol=lf
+LICENSE     text eol=lf
+
+# Always treat these as binary
+*.png       binary
+*.gguf      binary
+*.it        binary
+*.xm        binary
+*.s3m       binary
+*.mod       binary
+*.wav       binary
+*.ogg       binary
+*.glint     binary
+*.crash     binary
+*.fnti      binary

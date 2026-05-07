@@ -1,0 +1,50 @@
+# Zig build artifacts
+zig-cache/
+zig-out/
+.zig-cache/
+
+# Local config / secrets
+.envrc
+.env
+.env.local
+.env.*.local
+
+# IDE / editors
+.vscode/
+.idea/
+.vs/
+*.swp
+*.swo
+*.swn
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# OS-specific
+ehthumbs.db
+$RECYCLE.BIN/
+
+# Cart authoring temporaries
+*.crash
+*.fnti
+*.glint.bak
+
+# Auto-downloaded LLM weights (huge, never commit)
+models/
+*.gguf
+
+# Editor lockfiles
+.luarc.json.bak
+
+# Coverage / profiling
+*.profraw
+*.profdata
+coverage/
+
+# Vendored C deps build outputs (when vendor/ exists)
+vendor/**/build/
+vendor/**/cmake-build-*/
+
+# Windows-specific
+*.exe.lnk

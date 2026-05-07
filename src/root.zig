@@ -1,0 +1,71 @@
+//! glint — fantasy console engine library (public API surface)
+//!
+//! This is the "library" face of the engine. The CLI in src/main.zig is one
+//! consumer; future embedders (cart marketplace web service, modders, IDE
+//! plugins) are others. Keep this module's public surface tight so that
+//! consumers do not couple to internals.
+//!
+//! Internal modules (one per top-level directory under src/):
+//!   - engine:  frame loop, dev panel, log, capability resolver
+//!   - runtime: pixel framebuffer, sprite atlas, input, time
+//!   - lua:     ziglua + Luau VM, sandbox, 80-fn cart API binding
+//!   - cart:    PNG steganography, manifest TOML, capability validation
+//!   - ai:      dlopen llama.cpp, worker thread, streaming inbox, rate limit
+//!   - ecs:     zflecs wrapper + helpers
+//!   - gfx:     sokol_gfx init, palette LUT shader, integer-scale upscale
+//!   - snd:     sokol_audio + 4-channel PSG + .it tracker via libxmp
+//!   - replay:  deterministic harness, .crash artifact format
+//!
+//! As modules come online they will be re-exported here. For now this file
+//! advertises the version and the engine error type so downstream code can
+//! depend on a stable surface from day one.
+
+const std = @import("std");
+
+/// Project semver. Bump on every release. Pre-1.0 minor bumps may break the
+/// cart format; cart manifests pin `min_engine` to refuse loading on older
+/// engines.
+pub const VERSION = "0.0.1";
+
+/// Top-level engine error union. Per project policy library code does not
+/// panic; every fallible function returns an error from this set or a
+/// caller-injected superset.
+pub const EngineError = error{
+    /// Out of cart heap budget (declared in manifest [limits]).
+    CartOutOfMemory,
+    /// Cart binary fails magic / CRC32 / size validation.
+    CartFormatInvalid,
+    /// Cart's [glint] schema_version not supported by this engine.
+    CartSchemaUnsupported,
+    /// Cart declared a capability the engine does not recognize.
+    CapabilityUnknown,
+    /// Cart declared a required capability that host policy denied.
+    CapabilityRequiredButDenied,
+    /// `_update` produced state hash mismatching replay tape (rollback gate).
+    DeterminismViolation,
+    /// llama.cpp dlopen failed or model file missing/corrupt.
+    AiBackendUnavailable,
+    /// Engine called before init() — caller bug.
+    EngineNotInitialized,
+};
+
+test "version is non-empty and parseable" {
+    try std.testing.expect(VERSION.len > 0);
+    // crude semver tokenize: at least two dots
+    var dot_count: usize = 0;
+    for (VERSION) |c| {
+        if (c == '.') dot_count += 1;
+    }
+    try std.testing.expect(dot_count >= 2);
+}
+
+test "EngineError set contains expected variants" {
+    // Compile-time presence: each named error must be assignable into the set.
+    // If a variant is renamed or removed, this test fails at compile time and
+    // the public API change is forced through review.
+    const a: EngineError = error.CartOutOfMemory;
+    const b: EngineError = error.DeterminismViolation;
+    const c: EngineError = error.AiBackendUnavailable;
+    try std.testing.expect(a != b);
+    try std.testing.expect(b != c);
+}
