@@ -31,6 +31,12 @@ pub const VERSION = "0.0.1";
 /// Used by `glint demo` for early-development sanity check.
 pub const runDemo = @import("engine/window.zig").runDemo;
 
+/// 128x128 indexed framebuffer + 16-color palette.
+pub const pixel = @import("runtime/pixel.zig");
+
+/// 8-button keyboard input abstraction (cart-author surface).
+pub const input = @import("runtime/input.zig");
+
 /// Top-level engine error union. Per project policy library code does not
 /// panic; every fallible function returns an error from this set or a
 /// caller-injected superset.
