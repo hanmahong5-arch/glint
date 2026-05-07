@@ -107,90 +107,112 @@ const input = @import("../runtime/input.zig");
 const rng_mod = @import("../runtime/rng.zig");
 const ai_router = @import("../ai/router.zig");
 
-const TestSetup = struct {
-    vm: VM,
-    ctx: CartContext,
-    mock: ai_router.MockBackend,
-    router: *ai_router.Router,
-
-    fn init(fb: *pixel.Framebuffer, inp: *input.State) !TestSetup {
-        var s: TestSetup = undefined;
-        s.mock = ai_router.MockBackend.init();
-        s.router = try ai_router.Router.init(testing.allocator, &s.mock.backend);
-        errdefer s.router.deinit();
-        s.vm = try VM.init(testing.allocator);
-        errdefer s.vm.deinit();
-        s.ctx = .{
-            .fb = fb,
-            .inp = inp,
-            .rng = rng_mod.Xorshift32.init(1),
-            .ai = s.router,
-        };
-        return s;
-    }
-
-    fn deinit(self: *TestSetup) void {
-        self.vm.deinit();
-        self.router.deinit();
-    }
-};
+// Note: tests below set up their rig inline rather than returning
+// a struct from a helper. The router holds `&mock.backend`, and a
+// returned-by-value setup struct would move `mock` to a new address —
+// router's stored pointer would dangle. Inline ownership keeps the
+// addresses stable for the test's lifetime.
 
 test "ai.ask + ai.poll round-trips through Mock backend" {
     var fb: pixel.Framebuffer = undefined;
     var inp: input.State = .{};
-    var s = try TestSetup.init(&fb, &inp);
-    defer s.deinit();
-    s.ctx.registerApi(&s.vm);
+    var mock = ai_router.MockBackend.init();
+    const router = try ai_router.Router.init(testing.allocator, &mock.backend);
+    defer router.deinit();
+    var vm = try VM.init(testing.allocator);
+    defer vm.deinit();
+    var ctx: CartContext = .{
+        .fb = &fb,
+        .inp = &inp,
+        .rng = rng_mod.Xorshift32.init(1),
+        .ai = router,
+    };
+    ctx.registerApi(&vm);
 
     // Phase 1 is synchronous — ask() returns with the mailbox already
     // written, so a poll on the very next line sees the response.
-    try s.vm.exec("ai.ask('baker', 'hi')");
-    const len = try s.vm.evalInt("return #ai.poll('baker')");
+    try vm.exec("ai.ask('baker', 'hi')");
+    const len = try vm.evalInt("return #ai.poll('baker')");
     try testing.expectEqual(@as(i64, "echo: hi".len), len);
 }
 
 test "ai.poll returns nil before any ask" {
     var fb: pixel.Framebuffer = undefined;
     var inp: input.State = .{};
-    var s = try TestSetup.init(&fb, &inp);
-    defer s.deinit();
-    s.ctx.registerApi(&s.vm);
+    var mock = ai_router.MockBackend.init();
+    const router = try ai_router.Router.init(testing.allocator, &mock.backend);
+    defer router.deinit();
+    var vm = try VM.init(testing.allocator);
+    defer vm.deinit();
+    var ctx: CartContext = .{
+        .fb = &fb,
+        .inp = &inp,
+        .rng = rng_mod.Xorshift32.init(1),
+        .ai = router,
+    };
+    ctx.registerApi(&vm);
 
-    // Lua: `return ai.poll('baker') == nil` — coerce to int via 1/0 hack.
-    const v = try s.vm.evalInt("return ai.poll('baker') == nil and 1 or 0");
+    const v = try vm.evalInt("return ai.poll('baker') == nil and 1 or 0");
     try testing.expectEqual(@as(i64, 1), v);
 }
 
 test "ai.poll returns nil for unknown npc after asking a different one" {
     var fb: pixel.Framebuffer = undefined;
     var inp: input.State = .{};
-    var s = try TestSetup.init(&fb, &inp);
-    defer s.deinit();
-    s.ctx.registerApi(&s.vm);
+    var mock = ai_router.MockBackend.init();
+    const router = try ai_router.Router.init(testing.allocator, &mock.backend);
+    defer router.deinit();
+    var vm = try VM.init(testing.allocator);
+    defer vm.deinit();
+    var ctx: CartContext = .{
+        .fb = &fb,
+        .inp = &inp,
+        .rng = rng_mod.Xorshift32.init(1),
+        .ai = router,
+    };
+    ctx.registerApi(&vm);
 
-    try s.vm.exec("ai.ask('baker', 'hi')");
-    const v = try s.vm.evalInt("return ai.poll('priest') == nil and 1 or 0");
+    try vm.exec("ai.ask('baker', 'hi')");
+    const v = try vm.evalInt("return ai.poll('priest') == nil and 1 or 0");
     try testing.expectEqual(@as(i64, 1), v);
 }
 
 test "ai.ask raises Lua error on non-string npc" {
     var fb: pixel.Framebuffer = undefined;
     var inp: input.State = .{};
-    var s = try TestSetup.init(&fb, &inp);
-    defer s.deinit();
-    s.ctx.registerApi(&s.vm);
+    var mock = ai_router.MockBackend.init();
+    const router = try ai_router.Router.init(testing.allocator, &mock.backend);
+    defer router.deinit();
+    var vm = try VM.init(testing.allocator);
+    defer vm.deinit();
+    var ctx: CartContext = .{
+        .fb = &fb,
+        .inp = &inp,
+        .rng = rng_mod.Xorshift32.init(1),
+        .ai = router,
+    };
+    ctx.registerApi(&vm);
 
-    try testing.expectError(error.RuntimeError, s.vm.exec("ai.ask({}, 'hi')"));
+    try testing.expectError(error.RuntimeError, vm.exec("ai.ask({}, 'hi')"));
 }
 
 test "ai.ask raises Lua error on missing prompt" {
     var fb: pixel.Framebuffer = undefined;
     var inp: input.State = .{};
-    var s = try TestSetup.init(&fb, &inp);
-    defer s.deinit();
-    s.ctx.registerApi(&s.vm);
+    var mock = ai_router.MockBackend.init();
+    const router = try ai_router.Router.init(testing.allocator, &mock.backend);
+    defer router.deinit();
+    var vm = try VM.init(testing.allocator);
+    defer vm.deinit();
+    var ctx: CartContext = .{
+        .fb = &fb,
+        .inp = &inp,
+        .rng = rng_mod.Xorshift32.init(1),
+        .ai = router,
+    };
+    ctx.registerApi(&vm);
 
-    try testing.expectError(error.RuntimeError, s.vm.exec("ai.ask('baker', nil)"));
+    try testing.expectError(error.RuntimeError, vm.exec("ai.ask('baker', nil)"));
 }
 
 test "ai bindings are no-op when CartContext.ai is null" {

@@ -61,29 +61,33 @@ pub const Tracker = struct {
     /// historicalAverageTotal divides only by samples_filled.
     samples_filled: usize = 0,
 
-    timer: ?std.time.Timer = null,
+    /// Monotonic ns timestamp captured by the most recent beginPhase().
+    /// Caller-supplied so this module stays clock-agnostic; the engine
+    /// (engine/window.zig) reads from std.Io.Clock and passes ns in.
+    last_begin_ns: u64 = 0,
     active_phase: ?Phase = null,
 
     /// Begin timing a phase. If a different phase is already active, ends
-    /// it first (re-entrancy is treated as a usage bug, not a crash). On
-    /// systems where std.time.Timer.start fails, this returns the error
-    /// rather than swallowing it; callers map to scold-level log.
-    pub fn beginPhase(self: *Tracker, phase: Phase) std.time.Timer.Error!void {
-        if (self.active_phase != null) self.endPhase();
+    /// it first (re-entrancy is treated as a usage bug, not a crash).
+    /// `now_ns` is a monotonic timestamp the caller pulled from its
+    /// chosen clock (Io.Clock.Timestamp.now(.monotonic) in production;
+    /// hand-injected values in tests).
+    pub fn beginPhase(self: *Tracker, phase: Phase, now_ns: u64) void {
+        if (self.active_phase != null) self.endPhase(now_ns);
         self.active_phase = phase;
-        self.timer = try std.time.Timer.start();
+        self.last_begin_ns = now_ns;
     }
 
-    /// End the active phase; record elapsed ns into `current`. No-op if no
-    /// phase is active so callers can be sloppy about pairing.
-    pub fn endPhase(self: *Tracker) void {
+    /// End the active phase; record (now_ns - last_begin_ns) into
+    /// `current`. No-op if no phase is active so callers can be sloppy
+    /// about pairing. Saturating subtraction so a non-monotonic clock
+    /// glitch (rare; defensive) doesn't underflow into a huge count.
+    pub fn endPhase(self: *Tracker, now_ns: u64) void {
         const phase = self.active_phase orelse return;
-        var t = self.timer orelse return;
-        const elapsed = t.lap();
+        const elapsed = now_ns -| self.last_begin_ns;
         const idx = @intFromEnum(phase);
         self.current[idx] +|= elapsed;
         self.active_phase = null;
-        self.timer = null;
     }
 
     /// Roll `current` into history; reset `current` to zero. Call once per
@@ -150,13 +154,20 @@ test "fresh tracker has zero current and zero history" {
     try testing.expect(!t.isOverBudget());
 }
 
-test "begin/end phase records time" {
+test "begin/end phase records time from injected timestamps" {
     var t: Tracker = .{};
-    try t.beginPhase(.lua_update);
-    std.Thread.sleep(1_000_000); // ~1 ms; integration timing test
-    t.endPhase();
-    const lua_ns = t.current[@intFromEnum(Phase.lua_update)];
-    try testing.expect(lua_ns >= 500_000); // sleep is at least ~500us
+    t.beginPhase(.lua_update, 0);
+    t.endPhase(1_000_000); // simulate 1 ms wall time
+    try testing.expectEqual(@as(u64, 1_000_000), t.current[@intFromEnum(Phase.lua_update)]);
+}
+
+test "non-monotonic clock glitch saturates to zero rather than underflowing" {
+    var t: Tracker = .{};
+    t.beginPhase(.lua_update, 1_000_000);
+    // now_ns went BACKWARDS (rare clock-skew; defensive). Saturating
+    // subtraction guarantees we record 0, not 2^64 - delta.
+    t.endPhase(500_000);
+    try testing.expectEqual(@as(u64, 0), t.current[@intFromEnum(Phase.lua_update)]);
 }
 
 test "endFrame rolls current into history and resets" {
@@ -208,10 +219,11 @@ test "ring buffer wraps after HISTORY_FRAMES" {
 
 test "begin without paired end is auto-ended on next begin" {
     var t: Tracker = .{};
-    try t.beginPhase(.lua_update);
-    // Don't end. Begin another phase; tracker should auto-finalize lua_update.
-    try t.beginPhase(.lua_draw);
-    // lua_update should have been recorded (some non-zero ns).
-    try testing.expect(t.current[@intFromEnum(Phase.lua_update)] > 0);
-    t.endPhase();
+    t.beginPhase(.lua_update, 0);
+    // Don't end. Begin another phase; tracker should auto-finalize
+    // lua_update at the second beginPhase's `now_ns`.
+    t.beginPhase(.lua_draw, 500_000);
+    try testing.expectEqual(@as(u64, 500_000), t.current[@intFromEnum(Phase.lua_update)]);
+    t.endPhase(700_000);
+    try testing.expectEqual(@as(u64, 200_000), t.current[@intFromEnum(Phase.lua_draw)]);
 }

@@ -139,6 +139,17 @@ test "version is non-empty and parseable" {
     try std.testing.expect(dot_count >= 2);
 }
 
+// Force the test runner to include tests from every re-exported module.
+// Zig's `zig test` only analyses files reachable from the test root, and
+// `addTest(.{.root_module=...})` does NOT auto-recurse — so without this
+// block the build's test step would silently skip ~200 unit tests across
+// runtime/ cart/ ai/ lua/ replay/ engine/ . refAllDecls forces every
+// `pub const X = @import("...");` above to be analysed, which pulls in
+// each module's test blocks for execution.
+test "test discovery: pull every re-exported module into the test runner" {
+    std.testing.refAllDecls(@This());
+}
+
 test "EngineError set contains expected variants" {
     // Compile-time presence: each named error must be assignable into the set.
     // If a variant is renamed or removed, this test fails at compile time and
