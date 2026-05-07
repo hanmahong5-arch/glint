@@ -19,6 +19,7 @@ const zlua = @import("zlua");
 const pixel = @import("../runtime/pixel.zig");
 const input = @import("../runtime/input.zig");
 const rng_mod = @import("../runtime/rng.zig");
+const draw = @import("../runtime/draw.zig");
 const VM = @import("vm.zig").VM;
 const CartContext = @import("cart_ctx.zig").CartContext;
 
@@ -27,6 +28,11 @@ const CartContext = @import("cart_ctx.zig").CartContext;
 pub fn register(vm: *VM, ctx: *CartContext) void {
     bindCtx(vm, "cls", ctx, c_cls);
     bindCtx(vm, "pset", ctx, c_pset);
+    bindCtx(vm, "line", ctx, c_line);
+    bindCtx(vm, "rect", ctx, c_rect);
+    bindCtx(vm, "rectfill", ctx, c_rectfill);
+    bindCtx(vm, "circ", ctx, c_circ);
+    bindCtx(vm, "circfill", ctx, c_circfill);
 }
 
 /// Push `ctx` as a light-userdata then a 1-upvalue closure over `fnptr`,
@@ -66,6 +72,91 @@ fn c_cls(state: ?*zlua.LuaState) callconv(.c) c_int {
     else
         0;
     ctx.fb.clear(idx);
+    return 0;
+}
+
+/// Pull a number from the Lua stack and floor-truncate to i32. Used
+/// uniformly for coordinate args across line/rect/circ.
+fn intArg(lua: *zlua.Lua, idx: i32, comptime fn_name: []const u8, comptime arg_name: []const u8) i32 {
+    const v = lua.toNumber(idx) catch {
+        lua.raiseErrorStr(fn_name ++ ": " ++ arg_name ++ " must be a number", .{});
+    };
+    if (std.math.isNan(v)) return 0;
+    return @intFromFloat(@floor(v));
+}
+
+/// Read the optional "color" argument at slot `idx`. Returns 0 when the
+/// slot is empty. Out-of-range numbers clamp into [0, 15] like cls/pset.
+fn optColor(lua: *zlua.Lua, idx: i32, argc: i32) u4 {
+    if (argc < idx) return 0;
+    return paletteIdx(lua.toNumber(idx) catch 0);
+}
+
+/// line(x0, y0, x1, y1[, c]): Bresenham line, OOB silent-clamped.
+fn c_line(state: ?*zlua.LuaState) callconv(.c) c_int {
+    const lua: *zlua.Lua = @ptrCast(state.?);
+    const ctx = ctxFrom(lua);
+    const argc = lua.getTop();
+    const x0 = intArg(lua, 1, "line", "x0");
+    const y0 = intArg(lua, 2, "line", "y0");
+    const x1 = intArg(lua, 3, "line", "x1");
+    const y1 = intArg(lua, 4, "line", "y1");
+    const color = optColor(lua, 5, argc);
+    draw.line(ctx.fb, x0, y0, x1, y1, color);
+    return 0;
+}
+
+/// rect(x0, y0, x1, y1[, c]): rectangle outline.
+fn c_rect(state: ?*zlua.LuaState) callconv(.c) c_int {
+    const lua: *zlua.Lua = @ptrCast(state.?);
+    const ctx = ctxFrom(lua);
+    const argc = lua.getTop();
+    const x0 = intArg(lua, 1, "rect", "x0");
+    const y0 = intArg(lua, 2, "rect", "y0");
+    const x1 = intArg(lua, 3, "rect", "x1");
+    const y1 = intArg(lua, 4, "rect", "y1");
+    const color = optColor(lua, 5, argc);
+    draw.rect(ctx.fb, x0, y0, x1, y1, color);
+    return 0;
+}
+
+/// rectfill(x0, y0, x1, y1[, c]): filled rectangle.
+fn c_rectfill(state: ?*zlua.LuaState) callconv(.c) c_int {
+    const lua: *zlua.Lua = @ptrCast(state.?);
+    const ctx = ctxFrom(lua);
+    const argc = lua.getTop();
+    const x0 = intArg(lua, 1, "rectfill", "x0");
+    const y0 = intArg(lua, 2, "rectfill", "y0");
+    const x1 = intArg(lua, 3, "rectfill", "x1");
+    const y1 = intArg(lua, 4, "rectfill", "y1");
+    const color = optColor(lua, 5, argc);
+    draw.rectFill(ctx.fb, x0, y0, x1, y1, color);
+    return 0;
+}
+
+/// circ(x, y, r[, c]): circle outline (Pico-8 spelling).
+fn c_circ(state: ?*zlua.LuaState) callconv(.c) c_int {
+    const lua: *zlua.Lua = @ptrCast(state.?);
+    const ctx = ctxFrom(lua);
+    const argc = lua.getTop();
+    const x = intArg(lua, 1, "circ", "x");
+    const y = intArg(lua, 2, "circ", "y");
+    const r = intArg(lua, 3, "circ", "r");
+    const color = optColor(lua, 4, argc);
+    draw.circle(ctx.fb, x, y, r, color);
+    return 0;
+}
+
+/// circfill(x, y, r[, c]): filled circle.
+fn c_circfill(state: ?*zlua.LuaState) callconv(.c) c_int {
+    const lua: *zlua.Lua = @ptrCast(state.?);
+    const ctx = ctxFrom(lua);
+    const argc = lua.getTop();
+    const x = intArg(lua, 1, "circfill", "x");
+    const y = intArg(lua, 2, "circfill", "y");
+    const r = intArg(lua, 3, "circfill", "r");
+    const color = optColor(lua, 4, argc);
+    draw.circleFill(ctx.fb, x, y, r, color);
     return 0;
 }
 
@@ -224,4 +315,59 @@ test "math + gfx bindings co-exist on the same VM" {
     // Use a math binding to compute a coordinate, then pset.
     try vm.exec("pset(flr(1.5 + 2.5), 4, 11)");
     try testing.expectEqual(@as(u4, 11), fb.get(4, 4));
+}
+
+test "line() from Lua draws between endpoints" {
+    var fb: pixel.Framebuffer = undefined;
+    fb.clear(0);
+    var ctx = freshContext(&fb);
+    var vm = try VM.init(testing.allocator);
+    defer vm.deinit();
+    ctx.registerApi(&vm);
+    try vm.exec("line(10, 20, 30, 20, 7)");
+    try testing.expectEqual(@as(u4, 7), fb.get(10, 20));
+    try testing.expectEqual(@as(u4, 7), fb.get(20, 20));
+    try testing.expectEqual(@as(u4, 7), fb.get(30, 20));
+    try testing.expectEqual(@as(u4, 0), fb.get(31, 20));
+}
+
+test "rect() outline + rectfill() interior" {
+    var fb: pixel.Framebuffer = undefined;
+    fb.clear(0);
+    var ctx = freshContext(&fb);
+    var vm = try VM.init(testing.allocator);
+    defer vm.deinit();
+    ctx.registerApi(&vm);
+    try vm.exec("rect(5, 5, 15, 15, 9)");
+    try testing.expectEqual(@as(u4, 9), fb.get(5, 5));
+    try testing.expectEqual(@as(u4, 9), fb.get(15, 15));
+    try testing.expectEqual(@as(u4, 0), fb.get(10, 10)); // hole
+
+    try vm.exec("rectfill(20, 20, 30, 30, 11)");
+    try testing.expectEqual(@as(u4, 11), fb.get(25, 25));
+}
+
+test "circ() and circfill() respect radius" {
+    var fb: pixel.Framebuffer = undefined;
+    fb.clear(0);
+    var ctx = freshContext(&fb);
+    var vm = try VM.init(testing.allocator);
+    defer vm.deinit();
+    ctx.registerApi(&vm);
+    try vm.exec("circfill(64, 64, 5, 11)");
+    try testing.expectEqual(@as(u4, 11), fb.get(64, 64));
+    try testing.expectEqual(@as(u4, 11), fb.get(64, 60));
+    try testing.expectEqual(@as(u4, 0), fb.get(64, 70));
+}
+
+test "default color (omitted argument) is 0" {
+    var fb: pixel.Framebuffer = undefined;
+    fb.clear(7); // pre-fill non-zero
+    var ctx = freshContext(&fb);
+    var vm = try VM.init(testing.allocator);
+    defer vm.deinit();
+    ctx.registerApi(&vm);
+    try vm.exec("rectfill(0, 0, 10, 10)"); // no color arg -> default 0
+    try testing.expectEqual(@as(u4, 0), fb.get(5, 5));
+    try testing.expectEqual(@as(u4, 7), fb.get(50, 50)); // outside rect untouched
 }

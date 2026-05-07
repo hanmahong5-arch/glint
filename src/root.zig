@@ -97,6 +97,9 @@ pub const rng = @import("runtime/rng.zig");
 /// Cart-author math helpers (mid / lerp / saturate / approachTo / smoothstep).
 pub const math = @import("runtime/math.zig");
 
+/// Rasterization primitives: line / rect / rectfill / circle / circfill.
+pub const draw = @import("runtime/draw.zig");
+
 /// Top-level engine error union. Per project policy library code does not
 /// panic; every fallible function returns an error from this set or a
 /// caller-injected superset.
