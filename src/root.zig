@@ -50,6 +50,10 @@ pub const png_steg = @import("cart/png_steg.zig");
 /// Cart binary container format (magic + header + TLV sections + CRC32).
 pub const cart_format = @import("cart/format.zig");
 
+/// Deterministic Q16.16 math + sin/cos/atan2/sqrt LUT (no libm in
+/// determinism-critical paths; satisfies dx-spec §B.5 case #14).
+pub const fixed = @import("runtime/fixed.zig");
+
 /// Top-level engine error union. Per project policy library code does not
 /// panic; every fallible function returns an error from this set or a
 /// caller-injected superset.
