@@ -262,11 +262,17 @@ fn runCartHeadless(alloc: std.mem.Allocator, w: *Io.Writer, code: [:0]const u8, 
     var i: u32 = 0;
     while (i < frames) : (i += 1) {
         vm.exec("if _update then _update() end") catch |err| {
-            try w.print("\nglint run: _update failed at frame {d}: {s}\n", .{ i, @errorName(err) });
+            try w.print(
+                "\nglint run: _update failed at frame {d}: {s}\n  Lua: {s}\n",
+                .{ i, @errorName(err), vm.lastError() },
+            );
             return err;
         };
         vm.exec("if _draw then _draw() end") catch |err| {
-            try w.print("\nglint run: _draw failed at frame {d}: {s}\n", .{ i, @errorName(err) });
+            try w.print(
+                "\nglint run: _draw failed at frame {d}: {s}\n  Lua: {s}\n",
+                .{ i, @errorName(err), vm.lastError() },
+            );
             return err;
         };
     }

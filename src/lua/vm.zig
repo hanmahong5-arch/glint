@@ -27,6 +27,14 @@ const zlua = @import("zlua");
 pub const VM = struct {
     lua: *zlua.Lua,
 
+    /// Most recent Lua error message captured by exec/eval*. Empty when
+    /// the VM has never reported an error or the last call succeeded.
+    /// Sized to fit the common cart-author runtime errors comfortably;
+    /// longer messages are truncated with no information loss for the
+    /// debugging case.
+    last_error_buf: [256]u8 = undefined,
+    last_error_len: usize = 0,
+
     pub const Error = error{
         OutOfMemory,
         InvalidBytecode,
@@ -54,8 +62,31 @@ pub const VM = struct {
 
     /// Execute a Luau source snippet. Discards any return values. Use
     /// `evalInt` / `evalNumber` if the snippet ends with `return ...`.
+    /// On Lua-side error, the error message is pulled off the stack and
+    /// stored in `last_error` so callers can surface it without losing
+    /// the cart-author-visible context.
     pub fn exec(self: *VM, src: [:0]const u8) Error!void {
-        self.lua.doString(src) catch |err| return mapErr(err);
+        self.lua.doString(src) catch |err| {
+            self.captureLastError();
+            return mapErr(err);
+        };
+    }
+
+    pub fn lastError(self: *const VM) []const u8 {
+        return self.last_error_buf[0..self.last_error_len];
+    }
+
+    fn captureLastError(self: *VM) void {
+        const top = self.lua.getTop();
+        if (top == 0) {
+            self.last_error_len = 0;
+            return;
+        }
+        const msg = self.lua.toStringEx(-1);
+        const n = @min(msg.len, self.last_error_buf.len);
+        @memcpy(self.last_error_buf[0..n], msg[0..n]);
+        self.last_error_len = n;
+        self.lua.pop(1);
     }
 
     /// Evaluate a Luau snippet that ends in `return <int>` and return that
