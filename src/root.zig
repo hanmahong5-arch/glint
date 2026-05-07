@@ -59,6 +59,9 @@ pub const cart_format = @import("cart/format.zig");
 /// Cart capability declaration + host-policy resolution (dx-spec §A.4).
 pub const capability = @import("cart/capability.zig");
 
+/// Cart manifest (TOML) parser: text -> Manifest struct used by `glint pack`.
+pub const manifest = @import("cart/manifest.zig");
+
 /// Token-bucket rate limiter used by the AI router for tokens-per-sec caps.
 pub const ai_rate_limit = @import("ai/rate_limit.zig");
 

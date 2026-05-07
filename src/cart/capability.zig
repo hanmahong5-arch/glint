@@ -40,7 +40,10 @@ pub const NAME_COUNT: usize = 7;
 pub const Set = u8;
 
 pub fn bit(name: Name) Set {
-    return @as(Set, 1) << @intFromEnum(name);
+    // Shift amount must be u3 (Log2(u8) = 3); enum tag is u4. Values are
+    // bounded by NAME_COUNT <= 8, so the @intCast cannot trap.
+    const shift: u3 = @intCast(@intFromEnum(name));
+    return @as(Set, 1) << shift;
 }
 
 pub fn contains(set: Set, name: Name) bool {
@@ -64,7 +67,7 @@ pub const Policy = struct {
     allowed: Set = 0,
 
     pub fn allowAll() Policy {
-        const all: Set = (@as(Set, 1) << @as(u4, NAME_COUNT)) - 1;
+        const all: Set = (@as(Set, 1) << @as(u3, NAME_COUNT)) - 1;
         return .{ .allowed = all };
     }
 

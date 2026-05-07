@@ -36,7 +36,7 @@ pub fn main(init: std.process.Init) !void {
     } else if (eql(cmd, "new")) {
         try cmdNew(stdout, argv[2..]);
     } else if (eql(cmd, "pack")) {
-        try cmdPack(stdout, argv[2..]);
+        try cmdPack(arena, io, stdout, argv[2..]);
     } else if (eql(cmd, "replay")) {
         try cmdReplay(stdout, argv[2..]);
     } else if (eql(cmd, "demo")) {
@@ -66,7 +66,7 @@ fn printUsage(w: *Io.Writer) !void {
         \\  glint version              print version + build info
         \\  glint run <cart>           run a cart (.glint or .glint.png)
         \\  glint new <name>           scaffold new cart project
-        \\  glint pack <dir/>          pack a cart directory into .glint.png
+        \\  glint pack <dir/>          pack a cart directory (manifest.toml + code.lua) into .glint
         \\  glint replay <inputs.bin> <cart>
         \\                             1000x headless replay; assert state hash invariance
         \\  glint demo                 open a 768x768 sokol palette-cycle window
@@ -239,9 +239,109 @@ fn cmdNew(w: *Io.Writer, sub: []const []const u8) !void {
     try w.print("glint new: stub — would scaffold cart project '{s}/'\n", .{sub[0]});
 }
 
-fn cmdPack(w: *Io.Writer, sub: []const []const u8) !void {
-    _ = sub;
-    try w.writeAll("glint pack: stub — cart format pending W6 deliverable\n");
+fn cmdPack(alloc: std.mem.Allocator, io: Io, w: *Io.Writer, sub: []const []const u8) !void {
+    if (sub.len < 1) {
+        try w.writeAll("glint pack: missing cart directory. usage: glint pack <dir/>\n");
+        return error.MissingArgument;
+    }
+    const dir_path = sub[0];
+
+    // Resolve manifest + code paths inside the cart directory. Both are
+    // mandatory: manifest is the cart's identity, code.lua is its body.
+    const manifest_path = try std.fs.path.join(alloc, &.{ dir_path, "manifest.toml" });
+    defer alloc.free(manifest_path);
+    const code_path = try std.fs.path.join(alloc, &.{ dir_path, "code.lua" });
+    defer alloc.free(code_path);
+
+    const cwd = Io.Dir.cwd();
+    const manifest_text = cwd.readFileAlloc(io, manifest_path, alloc, .limited(glint.cart_format.MAX_CART_BYTES)) catch |err| {
+        try w.print("glint pack: cannot read '{s}': {s}\n", .{ manifest_path, @errorName(err) });
+        return err;
+    };
+    defer alloc.free(manifest_text);
+    var m = glint.manifest.parse(alloc, manifest_text) catch |err| {
+        try w.print("glint pack: manifest invalid: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    defer m.deinit(alloc);
+
+    const code_bytes = cwd.readFileAlloc(io, code_path, alloc, .limited(glint.cart_format.MAX_CART_BYTES)) catch |err| {
+        try w.print("glint pack: cannot read '{s}': {s}\n", .{ code_path, @errorName(err) });
+        return err;
+    };
+    defer alloc.free(code_bytes);
+
+    // Translate manifest capability declarations into the cart-binary flag
+    // bits the engine reads at load time. Only required-mode caps imply a
+    // non-skippable runtime dependency; optional caps are recorded in the
+    // meta blob and resolved at run time against host policy.
+    var flags: u32 = 0;
+    for (m.capabilities) |c| {
+        if (c.mode != .required) continue;
+        switch (c.name) {
+            .ai => flags |= glint.cart_format.Header.FLAG_NEEDS_LLM,
+            .net => flags |= glint.cart_format.Header.FLAG_NEEDS_NET,
+            else => {},
+        }
+    }
+
+    // Deterministic cart_id: xxh3-64 of (manifest text || code text). Two
+    // identical source dirs produce identical IDs across hosts; mutating
+    // either source byte changes the ID. Embedded in low 64 bits, leaving
+    // upper 64 for future namespace bits (publisher, signing).
+    var hasher = std.hash.XxHash3.init(0);
+    hasher.update(manifest_text);
+    hasher.update(code_bytes);
+    const cart_id_lo: u64 = hasher.final();
+
+    const header: glint.cart_format.Header = .{
+        .cart_id = @as(u128, cart_id_lo),
+        .author = padFixed(m.author),
+        .title = padFixed(m.title),
+        .flags = flags,
+        .n_sections = 0, // overwritten by encode
+    };
+    const sections = [_]glint.cart_format.Section{
+        .{ .type = .code, .data = code_bytes },
+        .{ .type = .meta, .data = manifest_text },
+    };
+    const bin = glint.cart_format.encode(alloc, header, &sections) catch |err| {
+        try w.print("glint pack: encode failed: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    defer alloc.free(bin);
+
+    // Output sits next to the source files: <dir>/<title>.glint
+    const out_name = try std.fmt.allocPrint(alloc, "{s}.glint", .{m.title});
+    defer alloc.free(out_name);
+    const out_path = try std.fs.path.join(alloc, &.{ dir_path, out_name });
+    defer alloc.free(out_path);
+
+    cwd.writeFile(io, .{ .sub_path = out_path, .data = bin }) catch |err| {
+        try w.print("glint pack: cannot write '{s}': {s}\n", .{ out_path, @errorName(err) });
+        return err;
+    };
+
+    try w.print(
+        \\glint pack: {s}
+        \\  cart_id:  0x{x}
+        \\  title:    {s}
+        \\  author:   {s}
+        \\  flags:    0x{x}
+        \\  caps:     {d}
+        \\  bytes:    {d} (code {d}, meta {d})
+        \\
+    , .{
+        out_path,
+        header.cart_id,
+        m.title,
+        m.author,
+        flags,
+        m.capabilities.len,
+        bin.len,
+        code_bytes.len,
+        manifest_text.len,
+    });
 }
 
 fn cmdReplay(w: *Io.Writer, sub: []const []const u8) !void {
